@@ -1,0 +1,20 @@
+{
+  "name": "Puppy Record Book",
+  "short_name": "Puppy Book",
+  "description": "A puppy raising record book for walks, food, potty breaks, weight, vaccines, and photos.",
+  "id": "/puppy-record-book",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f3ea",
+  "theme_color": "#617861",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

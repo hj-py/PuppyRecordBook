@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f7f3ea" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Puppy Record Book" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>Puppy Record Book</title>
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="phone-shell" aria-label="Puppy Record Book app">
+      <section class="app-screen">
+        <div id="mainView" class="view">
+          <header class="top-bar">
+            <div>
+              <p class="eyebrow">Puppy Record Book</p>
+              <h1 id="currentMonth">Calendar</h1>
+            </div>
+            <button class="icon-button" id="profileButton" type="button" aria-label="Open default information" title="Default information">
+              <span aria-hidden="true">T</span>
+            </button>
+          </header>
+
+          <section class="puppy-panel" aria-label="Puppy profile and growth insight">
+            <div class="avatar-stack">
+              <img id="heroPhoto" alt="Puppy profile" />
+              <label class="photo-button" for="photoInput" title="Upload puppy photo" aria-label="Upload puppy photo">
+                <span aria-hidden="true">+</span>
+              </label>
+              <input id="photoInput" type="file" accept="image/*" />
+            </div>
+            <div class="profile-fields">
+              <label>
+                Name
+                <input id="puppyName" maxlength="24" />
+              </label>
+              <div class="inline-fields">
+                <label>
+                  Birthday
+                  <input id="puppyBirthday" type="date" />
+                </label>
+                <label>
+                  Weight
+                  <input id="adultWeight" type="number" min="1" max="120" step="0.5" inputmode="decimal" />
+                  <span>kg</span>
+                </label>
+              </div>
+              <p id="puppyAgeText" class="age-text"></p>
+              <p id="growthInsight" class="insight-text"></p>
+            </div>
+          </section>
+
+          <nav class="month-controls" aria-label="Calendar navigation">
+            <button id="previousMonth" type="button" aria-label="Previous month" title="Previous month">&lt;</button>
+            <button id="nextMonth" type="button" aria-label="Next month" title="Next month">&gt;</button>
+          </nav>
+
+          <section class="calendar-card" aria-label="Calendar">
+            <div class="weekday-row" aria-hidden="true">
+              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+            </div>
+            <div id="calendarGrid" class="calendar-grid"></div>
+          </section>
+
+          <section class="category-panel" aria-label="Category records">
+            <div class="section-title">
+              <h2 id="categoryTitle">Walk Records</h2>
+              <span id="categoryCount">0</span>
+            </div>
+            <div class="category-tabs" role="tablist" aria-label="Record categories">
+              <button type="button" class="category-tab selected" data-category="walk">Walk</button>
+              <button type="button" class="category-tab" data-category="food">Food</button>
+              <button type="button" class="category-tab" data-category="weight">Weight</button>
+              <button type="button" class="category-tab" data-category="vaccine">Vaccine</button>
+              <button type="button" class="category-tab" data-category="school">School</button>
+            </div>
+            <div id="categoryList" class="category-list"></div>
+          </section>
+
+          <section class="photo-album-panel" aria-label="Photo album calendar">
+            <div class="section-title">
+              <h2>Photo Album</h2>
+              <span id="photoCount">0</span>
+            </div>
+            <div class="weekday-row album-weekdays" aria-hidden="true">
+              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+            </div>
+            <div id="photoCalendarGrid" class="photo-calendar-grid"></div>
+          </section>
+        </div>
+
+        <div id="dayView" class="view" hidden>
+          <header class="top-bar">
+            <button class="icon-button" id="backToMain" type="button" aria-label="Back to main page" title="Back">
+              <span aria-hidden="true">&lt;</span>
+            </button>
+            <div class="day-title">
+              <p class="eyebrow">Daily record</p>
+              <h1 id="selectedDateLabel"></h1>
+            </div>
+          </header>
+
+          <section class="day-panel" aria-label="Add day records">
+            <div class="section-title">
+              <h2>Add data</h2>
+              <label class="small-photo-button" for="dayPhotoInput">Photo</label>
+              <input id="dayPhotoInput" type="file" accept="image/*" />
+            </div>
+            <div class="quick-form" id="quickForm">
+              <label>
+                Date
+                <input id="dayDateInput" type="date" />
+              </label>
+              <div class="type-grid" role="radiogroup" aria-label="Record type">
+                <button type="button" class="type-button selected" data-type="walk">Walk</button>
+                <button type="button" class="type-button" data-type="food">Food</button>
+                <button type="button" class="type-button" data-type="poop">Poop</button>
+                <button type="button" class="type-button" data-type="pee">Pee</button>
+                <button type="button" class="type-button" data-type="weight">Weight</button>
+                <button type="button" class="type-button" data-type="vaccine">Vaccine</button>
+                <button type="button" class="type-button" data-type="school">Hundeschule</button>
+              </div>
+              <div class="form-row">
+                <label>
+                  Time
+                  <input id="recordTime" type="time" />
+                </label>
+                <label id="amountField">
+                  Amount
+                  <input id="recordAmount" placeholder="e.g. 120g" />
+                </label>
+              </div>
+              <label>
+                Place or note
+                <input id="recordNote" placeholder="Park, chicken kibble, rabies vaccine..." />
+              </label>
+              <div class="form-actions">
+                <button id="saveRecord" class="primary-button" type="button">Save</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="day-panel" aria-label="Selected day records">
+            <div class="section-title">
+              <h2>Records</h2>
+              <span id="dayRecordCount">0</span>
+            </div>
+            <div id="recordList" class="record-list"></div>
+          </section>
+
+          <section class="photo-strip" aria-label="Selected day photos">
+            <div class="section-title">
+              <h2>Photos</h2>
+              <span id="dayPhotoCount">0</span>
+            </div>
+            <div id="photoGallery" class="photo-gallery"></div>
+          </section>
+        </div>
+
+        <div id="profileView" class="view" hidden>
+          <header class="top-bar">
+            <button class="icon-button" id="backFromProfile" type="button" aria-label="Back to main page" title="Back">
+              <span aria-hidden="true">&lt;</span>
+            </button>
+            <div class="day-title">
+              <p class="eyebrow">Default information</p>
+              <h1>Profile</h1>
+            </div>
+          </header>
+
+          <section class="info-panel" aria-label="Owner information">
+            <div class="section-title">
+              <h2>Owner</h2>
+            </div>
+            <div class="info-grid">
+              <label>
+                My name
+                <input id="ownerName" maxlength="40" placeholder="Your name" />
+              </label>
+            </div>
+          </section>
+
+          <section class="info-panel" aria-label="Puppy information">
+            <div class="section-title">
+              <h2>Puppy</h2>
+            </div>
+            <div class="info-grid">
+              <label>
+                Puppy name
+                <input id="profilePuppyName" maxlength="24" />
+              </label>
+              <label>
+                Birthday
+                <input id="profilePuppyBirthday" type="date" />
+              </label>
+              <label>
+                Breed
+                <input id="puppyBreed" maxlength="40" placeholder="e.g. Poodle, mixed breed" />
+              </label>
+              <label>
+                Weight
+                <input id="profileWeight" type="number" min="0.1" max="120" step="0.1" inputmode="decimal" />
+              </label>
+              <label>
+                Basic notes
+                <input id="puppyNotes" maxlength="120" placeholder="Food sensitivity, temperament, chip note..." />
+              </label>
+            </div>
+          </section>
+
+          <section class="info-panel" aria-label="Hundeschule information">
+            <div class="section-title">
+              <h2>Hundeschule</h2>
+              <button id="enableSchoolAlarm" class="quiet-button" type="button">Enable</button>
+            </div>
+            <div class="info-grid">
+              <label>
+                School name
+                <input id="schoolName" maxlength="60" placeholder="Hundeschule name" />
+              </label>
+              <label>
+                Trainer
+                <input id="trainerName" maxlength="60" placeholder="Trainer name" />
+              </label>
+              <label>
+                Contact
+                <input id="schoolContact" maxlength="80" placeholder="Phone or email" />
+              </label>
+              <label>
+                Notes
+                <input id="schoolNotes" maxlength="120" placeholder="Class time, address, homework..." />
+              </label>
+              <label>
+                Repeats on
+                <select id="schoolWeekday">
+                  <option value="1">Monday</option>
+                  <option value="2">Tuesday</option>
+                  <option value="3">Wednesday</option>
+                  <option value="4">Thursday</option>
+                  <option value="5">Friday</option>
+                  <option value="6">Saturday</option>
+                  <option value="0">Sunday</option>
+                </select>
+              </label>
+              <label>
+                Time
+                <input id="schoolTime" type="time" />
+              </label>
+              <label>
+                Starts
+                <input id="schoolStartDate" type="date" />
+              </label>
+              <label>
+                Ends
+                <input id="schoolEndDate" type="date" />
+              </label>
+            </div>
+            <div id="schoolReminderList" class="reminder-list"></div>
+          </section>
+
+          <section class="info-panel" aria-label="Food time reminders">
+            <div class="section-title">
+              <h2>Food Alarm</h2>
+              <button id="enableFoodAlarm" class="quiet-button" type="button">Enable</button>
+            </div>
+            <div class="info-grid">
+              <label>
+                Morning
+                <input id="foodTimeMorning" type="time" />
+              </label>
+              <label>
+                Afternoon
+                <input id="foodTimeAfternoon" type="time" />
+              </label>
+              <label>
+                Evening
+                <input id="foodTimeEvening" type="time" />
+              </label>
+            </div>
+            <div id="foodReminderList" class="reminder-list"></div>
+          </section>
+
+          <section class="info-panel" aria-label="App install and puppy book sync">
+            <div class="section-title">
+              <h2>App & Sync</h2>
+              <button id="installAppButton" class="quiet-button" type="button">Install</button>
+            </div>
+            <p class="legal-note" id="installStatus">Install the app from Safari or Chrome to use it from the home screen.</p>
+            <div class="info-grid">
+              <label>
+                Sync code
+                <input id="syncCode" maxlength="40" placeholder="e.g. mochi-family" />
+              </label>
+              <label>
+                Supabase URL
+                <input id="syncUrl" placeholder="https://your-project.supabase.co" />
+              </label>
+              <label>
+                Supabase anon key
+                <input id="syncKey" placeholder="Public anon key" />
+              </label>
+            </div>
+            <div class="sync-actions">
+              <button id="pushSyncButton" class="primary-button" type="button">Push</button>
+              <button id="pullSyncButton" class="quiet-button" type="button">Pull</button>
+              <button id="exportDataButton" class="quiet-button" type="button">Export</button>
+              <label class="small-photo-button" for="importDataInput">Import</label>
+              <input id="importDataInput" type="file" accept="application/json" />
+            </div>
+            <p id="syncStatus" class="legal-note">Use the same sync code on each phone. Push uploads this puppy book; Pull downloads the shared copy.</p>
+          </section>
+
+          <section class="info-panel" aria-label="German rabies vaccination reminders">
+            <div class="section-title">
+              <h2>Vaccination Alarm</h2>
+              <button id="enableVaccineAlarm" class="quiet-button" type="button">Enable</button>
+            </div>
+            <p class="legal-note">
+              Germany/EU travel rules require valid rabies vaccination for cross-border pet travel. Rabies can be given from 12 weeks, and primary protection starts 21 days later.
+            </p>
+            <div class="info-grid">
+              <label>
+                Last rabies vaccine
+                <input id="rabiesDate" type="date" />
+              </label>
+              <label>
+                Valid until
+                <input id="rabiesValidUntil" type="date" />
+              </label>
+            </div>
+            <div id="vaccineReminderList" class="reminder-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
