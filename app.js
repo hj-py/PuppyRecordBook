@@ -1340,6 +1340,11 @@ function validateFirebaseSettings() {
     return null;
   }
 
+  if (state.sync.code.length < 12) {
+    renderSyncStatus("Firebase sync code must be at least 12 characters. Try something like leo-family-2026.");
+    return null;
+  }
+
   try {
     const config = parseFirebaseConfig(state.sync.firebaseConfig);
     if (!config.projectId) {
@@ -1350,14 +1355,25 @@ function validateFirebaseSettings() {
     persist();
     return config;
   } catch {
-    renderSyncStatus("Firebase config must include projectId. Paste the full firebaseConfig object, not only the API key.");
+    renderSyncStatus("Firebase config must include projectId. Paste the full firebaseConfig block from Project settings > General > SDK setup.");
     return null;
   }
 }
 
 function parseFirebaseConfig(value) {
   let text = value.trim();
-  text = text.replace(/^const\s+firebaseConfig\s*=\s*/, "").replace(/^firebaseConfig\s*=\s*/, "").replace(/;$/, "").trim();
+  const assignmentMatch = text.match(/firebaseConfig\s*=\s*({[\s\S]*?})\s*;?/);
+  if (assignmentMatch) {
+    text = assignmentMatch[1];
+  }
+  text = text
+    .replace(/^(?:const|let|var)\s+firebaseConfig\s*=\s*/, "")
+    .replace(/^firebaseConfig\s*=\s*/, "")
+    .replace(/;$/, "")
+    .trim();
+  if (!text.startsWith("{") && text.includes("{") && text.includes("}")) {
+    text = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  }
   if (!text.startsWith("{")) {
     throw new Error("Not a config object");
   }

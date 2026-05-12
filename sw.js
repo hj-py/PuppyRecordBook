@@ -1,4 +1,4 @@
-const cacheName = "puppy-record-book-v15";
+const cacheName = "puppy-record-book-v17";
 const appShell = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
