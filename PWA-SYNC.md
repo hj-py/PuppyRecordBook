@@ -75,10 +75,13 @@ Firebase Spark is Google's no-cost plan. Cloud Firestore has a free quota for on
 3. Open `Build > Firestore Database`.
 4. Create a Firestore database.
 5. Choose a region.
-6. Start in test mode for first setup, then replace rules with the rules below.
-7. Open `Project settings > General`.
-8. Under `Your apps`, add a Web app.
-9. Copy the Firebase config object. It looks like:
+6. Open `Build > Authentication`.
+7. Go to `Sign-in method`.
+8. Enable `Anonymous`.
+9. Return to Firestore and replace rules with the rules below.
+10. Open `Project settings > General`.
+11. Under `Your apps`, add a Web app.
+12. Copy the Firebase config object. It looks like:
 
 ```js
 const firebaseConfig = {
@@ -91,9 +94,24 @@ const firebaseConfig = {
 };
 ```
 
-10. In Puppy Record Book, open `T > App & Sync`.
-11. Put a private `Sync code`, for example `leo-family-8392`.
-12. Paste only the JSON part into `Firebase config JSON`, like:
+13. In Puppy Record Book, open `T > App & Sync`.
+14. Put a private `Sync code`, for example `leo-family-8392`.
+15. Paste either the full Firebase config snippet or only the JSON object into `Firebase config JSON`.
+
+This app accepts the full snippet:
+
+```js
+const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  storageBucket: "...",
+  messagingSenderId: "...",
+  appId: "..."
+};
+```
+
+It also accepts strict JSON:
 
 ```json
 {
@@ -106,8 +124,8 @@ const firebaseConfig = {
 }
 ```
 
-13. Tap `Push Firebase` on the phone with the latest data.
-14. Tap `Pull Firebase` on the other phone.
+16. Tap `Push Firebase` on the phone with the latest data.
+17. Tap `Pull Firebase` on the other phone.
 
 ### Firestore Rules
 
@@ -119,10 +137,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /puppy_books/{syncCode} {
-      allow read, write: if syncCode.size() >= 12;
+      allow read, write: if request.auth != null && syncCode.size() >= 12;
     }
   }
 }
 ```
 
-Important: this keeps the app simple, but it is not account-secured. Anyone who knows your Firebase config and sync code can access that shared puppy book. Use a long random sync code.
+Important: this keeps the app simple. It uses Firebase Anonymous Authentication, so anyone with the Firebase config and your long sync code could access that shared puppy book. Use a long random sync code.

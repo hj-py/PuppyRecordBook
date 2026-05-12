@@ -30,6 +30,7 @@ let currentView = "main";
 let touchStartX = 0;
 let touchStartY = 0;
 let editingRecordId = null;
+let firebaseServices = null;
 
 const elements = {
   mainView: document.querySelector("#mainView"),
@@ -1295,24 +1296,16 @@ async function pushFirebaseSync() {
 
   renderSyncStatus("Pushing to Firebase...");
   try {
-    const response = await fetch(getFirebaseDocumentUrl(settings), {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          bookData: { stringValue: JSON.stringify(getSyncPayload()) },
-          updatedAt: { timestampValue: new Date().toISOString() },
-        },
-      }),
+    const services = await getFirebaseServices(settings);
+    await services.setDoc(services.doc(services.db, "puppy_books", state.sync.code), {
+      bookData: getSyncPayload(),
+      updatedAt: new Date().toISOString(),
     });
-    if (!response.ok) {
-      throw new Error("Firebase push failed");
-    }
     state.sync.lastSync = new Date().toLocaleString();
     persist();
     renderSyncStatus(`Pushed to Firebase sync code "${state.sync.code}".`);
-  } catch {
-    renderSyncStatus("Firebase push failed. Check Firestore rules, project config, and internet connection.");
+  } catch (error) {
+    renderSyncStatus(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
   }
 }
 
@@ -1324,20 +1317,16 @@ async function pullFirebaseSync() {
 
   renderSyncStatus("Pulling from Firebase...");
   try {
-    const response = await fetch(getFirebaseDocumentUrl(settings));
-    if (!response.ok) {
-      throw new Error("Firebase pull failed");
-    }
-    const documentData = await response.json();
-    const rawPayload = documentData.fields?.bookData?.stringValue;
-    if (!rawPayload) {
+    const services = await getFirebaseServices(settings);
+    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
+    if (!snapshot.exists()) {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
       return;
     }
-    applySyncedPayload(JSON.parse(rawPayload));
+    applySyncedPayload(snapshot.data().bookData);
     renderSyncStatus(`Pulled Firebase sync code "${state.sync.code}".`);
-  } catch {
-    renderSyncStatus("Firebase pull failed. Check Firestore rules, project config, and internet connection.");
+  } catch (error) {
+    renderSyncStatus(`Firebase pull failed: ${getFirebaseErrorMessage(error)}`);
   }
 }
 
@@ -1352,19 +1341,72 @@ function validateFirebaseSettings() {
   }
 
   try {
-    const config = JSON.parse(state.sync.firebaseConfig);
+    const config = parseFirebaseConfig(state.sync.firebaseConfig);
     if (!config.projectId) {
       throw new Error("Missing projectId");
     }
+    state.sync.firebaseConfig = JSON.stringify(config, null, 2);
+    elements.firebaseConfig.value = state.sync.firebaseConfig;
+    persist();
     return config;
   } catch {
-    renderSyncStatus("Firebase config must be valid JSON and include projectId.");
+    renderSyncStatus("Firebase config must include projectId. Paste the full firebaseConfig object, not only the API key.");
     return null;
   }
 }
 
-function getFirebaseDocumentUrl(config) {
-  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/(default)/documents/puppy_books/${encodeURIComponent(state.sync.code)}`;
+function parseFirebaseConfig(value) {
+  let text = value.trim();
+  text = text.replace(/^const\s+firebaseConfig\s*=\s*/, "").replace(/^firebaseConfig\s*=\s*/, "").replace(/;$/, "").trim();
+  if (!text.startsWith("{")) {
+    throw new Error("Not a config object");
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    const jsonish = text
+      .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":')
+      .replace(/'/g, '"');
+    return JSON.parse(jsonish);
+  }
+}
+
+async function getFirebaseServices(config) {
+  if (firebaseServices?.projectId === config.projectId) {
+    return firebaseServices;
+  }
+
+  const appModule = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+  const authModule = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js");
+  const firestoreModule = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
+  const appName = `puppy-record-book-${config.projectId}`;
+  const existingApp = appModule.getApps().find((app) => app.name === appName);
+  const app = existingApp || appModule.initializeApp(config, appName);
+  const auth = authModule.getAuth(app);
+  if (!auth.currentUser) {
+    await authModule.signInAnonymously(auth);
+  }
+  firebaseServices = {
+    projectId: config.projectId,
+    db: firestoreModule.getFirestore(app),
+    doc: firestoreModule.doc,
+    setDoc: firestoreModule.setDoc,
+    getDoc: firestoreModule.getDoc,
+  };
+  return firebaseServices;
+}
+
+function getFirebaseErrorMessage(error) {
+  if (error?.code === "auth/admin-restricted-operation") {
+    return "enable Anonymous sign-in in Firebase Authentication.";
+  }
+  if (error?.code === "permission-denied") {
+    return "check Firestore rules and make sure Anonymous Auth is enabled.";
+  }
+  if (error?.message?.includes("Failed to fetch")) {
+    return "check internet connection and Firebase project config.";
+  }
+  return error?.message || "check Firebase setup.";
 }
 
 function handleTouchStart(event) {
