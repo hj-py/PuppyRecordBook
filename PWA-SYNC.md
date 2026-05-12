@@ -66,7 +66,7 @@ Important: this simple shared-code model is convenient for family use, but anyon
 
 ## Free Sync With Firebase Spark
 
-Firebase Spark is Google's no-cost plan. Cloud Firestore has a free quota for one database per project, including daily free reads/writes and 1 GiB stored data. See Firebase's official Firestore pricing page for current limits: https://firebase.google.com/docs/firestore/pricing
+Firebase Spark is Google's no-cost plan. Cloud Firestore has a free quota for one database per project, including daily free reads/writes and 1 GiB stored data. See Firebase's official pricing page for current limits: https://firebase.google.com/pricing
 
 ### Firebase Setup
 
@@ -144,3 +144,5 @@ service cloud.firestore {
 ```
 
 Important: this keeps the app simple. It uses Firebase Anonymous Authentication, so anyone with the Firebase config and your long sync code could access that shared puppy book. Use a long random sync code.
+
+The main puppy thumbnail stays only on each phone and is not pushed or pulled with Firebase sync.

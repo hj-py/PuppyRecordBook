@@ -218,9 +218,7 @@ label,
 .quick-form,
 .day-panel,
 .category-panel,
-.info-panel,
-.photo-album-panel,
-.photo-strip {
+.info-panel {
   min-width: 0;
 }
 
@@ -352,9 +350,7 @@ select:focus {
 .day-panel,
 .category-panel,
 .info-panel,
-.quick-log-panel,
-.photo-album-panel,
-.photo-strip {
+.quick-log-panel {
   margin-top: 14px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -445,74 +441,6 @@ select:focus {
   font-size: 0.74rem;
   font-weight: 650;
   line-height: 1.35;
-}
-
-.photo-album-panel {
-  background: var(--paper);
-}
-
-.album-weekdays {
-  margin-top: 12px;
-}
-
-.photo-calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 5px;
-  margin-top: 7px;
-}
-
-.photo-day {
-  display: grid;
-  align-content: start;
-  justify-items: center;
-  min-height: 64px;
-  padding: 4px 2px;
-  border-radius: 8px;
-  background: #fbf7ef;
-  color: var(--ink);
-  overflow: hidden;
-}
-
-.photo-day.muted {
-  opacity: 0.48;
-}
-
-.photo-day.has-photo {
-  border: 1px solid var(--line);
-}
-
-.photo-thumbs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px;
-  width: 100%;
-  margin-top: 3px;
-}
-
-.photo-thumbs img {
-  width: 100%;
-  height: 18px;
-  object-fit: cover;
-  border-radius: 4px;
-}
-
-.photo-thumbs img:first-child:nth-last-child(1) {
-  grid-column: 1 / -1;
-  height: 34px;
-}
-
-.photo-day-count {
-  display: grid;
-  place-items: center;
-  min-width: 18px;
-  height: 18px;
-  margin-top: 3px;
-  border-radius: 999px;
-  background: var(--ink);
-  color: #fffdf8;
-  font-size: 0.64rem;
-  font-weight: 900;
 }
 
 .category-tabs {
@@ -663,8 +591,7 @@ select:focus {
   font-weight: 900;
 }
 
-#importDataInput,
-#dayPhotoInput {
+#importDataInput {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;
@@ -811,25 +738,6 @@ select:focus {
   color: #fffdf8;
   font-size: 0.75rem;
   font-weight: 800;
-}
-
-.photo-gallery {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 92px;
-  gap: 8px;
-  margin-top: 10px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-}
-
-.photo-gallery img {
-  width: 92px;
-  height: 92px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #e8dfcf;
 }
 
 @media (max-width: 360px) {

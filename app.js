@@ -41,7 +41,6 @@ const elements = {
   previousMonth: document.querySelector("#previousMonth"),
   nextMonth: document.querySelector("#nextMonth"),
   calendarGrid: document.querySelector("#calendarGrid"),
-  photoCalendarGrid: document.querySelector("#photoCalendarGrid"),
   backToMain: document.querySelector("#backToMain"),
   backFromProfile: document.querySelector("#backFromProfile"),
   selectedDateLabel: document.querySelector("#selectedDateLabel"),
@@ -65,10 +64,6 @@ const elements = {
   quickLogStatus: document.querySelector("#quickLogStatus"),
   heroPhoto: document.querySelector("#heroPhoto"),
   photoInput: document.querySelector("#photoInput"),
-  dayPhotoInput: document.querySelector("#dayPhotoInput"),
-  photoGallery: document.querySelector("#photoGallery"),
-  photoCount: document.querySelector("#photoCount"),
-  dayPhotoCount: document.querySelector("#dayPhotoCount"),
   ownerName: document.querySelector("#ownerName"),
   profilePuppyName: document.querySelector("#profilePuppyName"),
   profilePuppyBirthday: document.querySelector("#profilePuppyBirthday"),
@@ -249,13 +244,8 @@ function bindEvents() {
   });
 
   elements.photoInput.addEventListener("change", async (event) => {
-    await addPhotosFromInput(event.target, toKey(today));
+    await addProfilePhotoFromInput(event.target);
     renderMain();
-  });
-
-  elements.dayPhotoInput.addEventListener("change", async (event) => {
-    await addPhotosFromInput(event.target, selectedDate);
-    renderDayView();
   });
 
   document.addEventListener("touchstart", handleTouchStart, { passive: true });
@@ -271,7 +261,6 @@ function renderMain() {
   renderAge();
   renderInsight();
   renderQuickLogButtons();
-  renderPhotoCalendar();
   renderCategory();
   elements.heroPhoto.src = getLatestPhoto()?.src || defaultPhoto;
 }
@@ -281,7 +270,6 @@ function renderDayView() {
   elements.dayDateInput.value = selectedDate;
   elements.recordTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
   renderRecords();
-  renderDayPhotos();
 }
 
 function showDayView(dateKey) {
@@ -319,7 +307,6 @@ function renderCalendar() {
   getCalendarDates().forEach((day) => {
     const key = toKey(day);
     const records = state.records[key] || [];
-    const photoCount = getPhotosForDate(key).length;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "day-cell";
@@ -328,32 +315,10 @@ function renderCalendar() {
     button.classList.toggle("selected", key === selectedDate);
     button.innerHTML = `
       <span class="day-number">${day.getDate()}</span>
-      <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}${photoCount ? '<span class="dot photo-dot"></span>' : ""}</span>
+      <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
     `;
     button.addEventListener("click", () => showDayView(key));
     elements.calendarGrid.appendChild(button);
-  });
-}
-
-function renderPhotoCalendar() {
-  elements.photoCount.textContent = state.photos.length;
-  elements.photoCalendarGrid.innerHTML = "";
-
-  getCalendarDates().forEach((day) => {
-    const key = toKey(day);
-    const photos = getPhotosForDate(key);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "photo-day";
-    button.classList.toggle("muted", day.getMonth() !== visibleMonth.getMonth());
-    button.classList.toggle("has-photo", photos.length > 0);
-    button.innerHTML = `
-      <span class="day-number">${day.getDate()}</span>
-      ${renderPhotoThumbs(photos, key)}
-      ${photos.length > 1 ? `<span class="photo-day-count">${photos.length}</span>` : ""}
-    `;
-    button.addEventListener("click", () => showDayView(key));
-    elements.photoCalendarGrid.appendChild(button);
   });
 }
 
@@ -396,41 +361,6 @@ function renderRecords() {
     });
     elements.recordList.appendChild(item);
   });
-}
-
-function renderDayPhotos() {
-  const photos = getPhotosForDate(selectedDate);
-  elements.dayPhotoCount.textContent = photos.length;
-  elements.photoGallery.innerHTML = "";
-
-  if (!photos.length) {
-    const placeholder = document.createElement("img");
-    placeholder.src = defaultPhoto;
-    placeholder.alt = "Puppy photo placeholder";
-    elements.photoGallery.appendChild(placeholder);
-    return;
-  }
-
-  photos.forEach((photo, index) => {
-    const img = document.createElement("img");
-    img.src = photo.src;
-    img.alt = `Puppy photo ${index + 1}`;
-    img.addEventListener("click", () => {
-      elements.heroPhoto.src = photo.src;
-    });
-    elements.photoGallery.appendChild(img);
-  });
-}
-
-function renderPhotoThumbs(photos, dateKey) {
-  if (!photos.length) {
-    return "";
-  }
-
-  return `<span class="photo-thumbs">${photos
-    .slice(0, 4)
-    .map((photo, index) => `<img src="${photo.src}" alt="Photo ${index + 1} from ${formatShortDate(dateKey)}" />`)
-    .join("")}</span>`;
 }
 
 function renderAge() {
@@ -746,13 +676,13 @@ function clearEditMode() {
   elements.cancelEditRecord.hidden = true;
 }
 
-async function addPhotosFromInput(input, dateKey) {
+async function addProfilePhotoFromInput(input) {
   const files = Array.from(input.files || []);
-  for (const file of files) {
+  const file = files[0];
+  if (file) {
     const photo = await fileToDataUrl(file);
-    state.photos.unshift({ id: createId(), src: photo, date: dateKey });
+    state.photos = [{ id: createId(), src: photo, date: toKey(today), name: file.name || "puppy-photo.jpg" }];
   }
-  state.photos = state.photos.slice(0, 40);
   input.value = "";
   elements.heroPhoto.src = getLatestPhoto()?.src || defaultPhoto;
   persist();
@@ -838,10 +768,6 @@ function getCategoryDetail(entry, activeCategoryType = "") {
     primary: entry.amount || "Food",
     secondary: entry.note,
   };
-}
-
-function getPhotosForDate(dateKey) {
-  return state.photos.filter((photo) => photo.date === dateKey);
 }
 
 function syncProfileWeightFromRecords() {
@@ -1162,17 +1088,24 @@ function updateInstallStatus(message) {
 }
 
 function getSyncPayload() {
-  return {
+  const syncState = { ...state, photos: [] };
+  return makeJsonSafe({
     version: 1,
     exportedAt: new Date().toISOString(),
-    data: state,
-  };
+    data: syncState,
+  });
+}
+
+function makeJsonSafe(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function applySyncedPayload(payload) {
+  const localPhotos = state.photos;
   const nextState = migrateState(payload.data || payload);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, nextState);
+  state.photos = localPhotos;
   state.sync.lastSync = new Date().toLocaleString();
   persist();
   hydrateMainProfile();
@@ -1625,7 +1558,7 @@ function migrateState(value) {
       foodAlarmEnabled: Boolean(value.settings?.foodAlarmEnabled),
       lastNotificationKey: value.settings?.lastNotificationKey || "",
     },
-    photos,
+    photos: photos.slice(0, 1),
     records: value.records || {},
   };
 }
