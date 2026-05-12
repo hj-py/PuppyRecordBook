@@ -9,9 +9,13 @@ const typeConfig = {
   weight: { label: "Weight", icon: "Kg", color: "#c86f5c", amount: "Weight", placeholder: "e.g. 4.8kg" },
   vaccine: { label: "Vaccine", icon: "V", color: "#4f6f93", amount: "Dose", placeholder: "e.g. DHPP" },
   school: { label: "Hundeschule", icon: "H", color: "#7f6aa3", amount: "Topic", placeholder: "e.g. leash walking" },
+  play: { label: "Play", icon: "Pl", color: "#d68a6a", amount: "Duration", placeholder: "auto" },
+  sleep: { label: "Sleep", icon: "S", color: "#6f7896", amount: "Duration", placeholder: "auto" },
+  train: { label: "Train", icon: "T", color: "#817044", amount: "Duration", placeholder: "auto" },
 };
 
 const categoryTypes = ["walk", "food", "weight", "vaccine", "school"];
+const timedQuickTypes = ["walk", "play", "sleep", "train"];
 const defaultPhoto =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='78' r='46' fill='%23b98b68'/%3E%3Ccircle cx='48' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='112' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='64' cy='74' r='6' fill='%2325231f'/%3E%3Ccircle cx='96' cy='74' r='6' fill='%2325231f'/%3E%3Cellipse cx='80' cy='90' rx='10' ry='7' fill='%2325231f'/%3E%3Cpath d='M66 105c10 9 20 9 29 0' fill='none' stroke='%2325231f' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
 
@@ -22,6 +26,10 @@ let selectedDate = toKey(today);
 let activeType = "walk";
 let activeCategory = "walk";
 let deferredInstallPrompt = null;
+let currentView = "main";
+let touchStartX = 0;
+let touchStartY = 0;
+let editingRecordId = null;
 
 const elements = {
   mainView: document.querySelector("#mainView"),
@@ -42,16 +50,18 @@ const elements = {
   recordNote: document.querySelector("#recordNote"),
   amountField: document.querySelector("#amountField"),
   saveRecord: document.querySelector("#saveRecord"),
+  cancelEditRecord: document.querySelector("#cancelEditRecord"),
   recordList: document.querySelector("#recordList"),
   dayRecordCount: document.querySelector("#dayRecordCount"),
   puppyName: document.querySelector("#puppyName"),
-  puppyBirthday: document.querySelector("#puppyBirthday"),
   puppyAgeText: document.querySelector("#puppyAgeText"),
   adultWeight: document.querySelector("#adultWeight"),
   growthInsight: document.querySelector("#growthInsight"),
   categoryTitle: document.querySelector("#categoryTitle"),
   categoryCount: document.querySelector("#categoryCount"),
   categoryList: document.querySelector("#categoryList"),
+  activeSessionCount: document.querySelector("#activeSessionCount"),
+  quickLogStatus: document.querySelector("#quickLogStatus"),
   heroPhoto: document.querySelector("#heroPhoto"),
   photoInput: document.querySelector("#photoInput"),
   dayPhotoInput: document.querySelector("#dayPhotoInput"),
@@ -79,9 +89,13 @@ const elements = {
   schoolEndDate: document.querySelector("#schoolEndDate"),
   schoolReminderList: document.querySelector("#schoolReminderList"),
   enableFoodAlarm: document.querySelector("#enableFoodAlarm"),
+  foodType: document.querySelector("#foodType"),
   foodTimeMorning: document.querySelector("#foodTimeMorning"),
   foodTimeAfternoon: document.querySelector("#foodTimeAfternoon"),
   foodTimeEvening: document.querySelector("#foodTimeEvening"),
+  foodAmountMorning: document.querySelector("#foodAmountMorning"),
+  foodAmountAfternoon: document.querySelector("#foodAmountAfternoon"),
+  foodAmountEvening: document.querySelector("#foodAmountEvening"),
   foodReminderList: document.querySelector("#foodReminderList"),
   installAppButton: document.querySelector("#installAppButton"),
   installStatus: document.querySelector("#installStatus"),
@@ -99,7 +113,6 @@ init();
 
 function init() {
   elements.puppyName.value = state.profile.name;
-  elements.puppyBirthday.value = state.profile.birthday;
   elements.adultWeight.value = state.profile.weightKg;
   hydrateProfileForm();
   syncProfileWeightFromRecords();
@@ -148,6 +161,7 @@ function bindEvents() {
   });
 
   elements.saveRecord.addEventListener("click", saveRecord);
+  elements.cancelEditRecord.addEventListener("click", clearEditMode);
 
   document.querySelectorAll(".type-button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -165,10 +179,13 @@ function bindEvents() {
     });
   });
 
-  [elements.puppyName, elements.puppyBirthday, elements.adultWeight].forEach((input) => {
+  document.querySelectorAll(".quick-log-button").forEach((button) => {
+    button.addEventListener("click", () => handleQuickLog(button.dataset.action));
+  });
+
+  [elements.puppyName, elements.adultWeight].forEach((input) => {
     input.addEventListener("input", () => {
       state.profile.name = elements.puppyName.value.trim() || "Puppy";
-      state.profile.birthday = elements.puppyBirthday.value || state.profile.birthday;
       state.profile.weightKg = Number(elements.adultWeight.value) || state.profile.weightKg;
       persist();
       hydrateProfileForm();
@@ -233,15 +250,20 @@ function bindEvents() {
     await addPhotosFromInput(event.target, selectedDate);
     renderDayView();
   });
+
+  document.addEventListener("touchstart", handleTouchStart, { passive: true });
+  document.addEventListener("touchend", handleTouchEnd, { passive: true });
 }
 
 function renderMain() {
+  currentView = "main";
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
   elements.profileView.hidden = true;
   renderCalendar();
   renderAge();
   renderInsight();
+  renderQuickLogButtons();
   renderPhotoCalendar();
   renderCategory();
   elements.heroPhoto.src = getLatestPhoto()?.src || defaultPhoto;
@@ -256,6 +278,7 @@ function renderDayView() {
 }
 
 function showDayView(dateKey) {
+  currentView = "day";
   selectedDate = dateKey;
   const date = parseDateKey(dateKey);
   visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
@@ -266,6 +289,7 @@ function showDayView(dateKey) {
 }
 
 function showMainView() {
+  currentView = "main";
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
   elements.profileView.hidden = true;
@@ -273,6 +297,7 @@ function showMainView() {
 }
 
 function showProfileView() {
+  currentView = "profile";
   elements.mainView.hidden = true;
   elements.dayView.hidden = true;
   elements.profileView.hidden = false;
@@ -356,6 +381,12 @@ function renderRecords() {
       persist();
       renderDayView();
     });
+    item.addEventListener("click", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
+      startEditRecord(record);
+    });
     elements.recordList.appendChild(item);
   });
 }
@@ -398,11 +429,11 @@ function renderPhotoThumbs(photos, dateKey) {
 function renderAge() {
   const birthday = parseDateKey(state.profile.birthday);
   if (!birthday) {
-    elements.puppyAgeText.textContent = "Add a birthday to calculate age.";
+    elements.puppyAgeText.textContent = "Age: add birthday in profile";
     return;
   }
 
-  elements.puppyAgeText.textContent = `${state.profile.name} is ${formatAge(birthday, today)} old.`;
+  elements.puppyAgeText.textContent = `Age: ${formatAge(birthday, today)}`;
 }
 
 function renderInsight() {
@@ -431,23 +462,119 @@ function renderInsight() {
   }
 }
 
+function renderQuickLogButtons() {
+  document.querySelectorAll(".quick-log-button").forEach((button) => {
+    button.classList.toggle("active", Boolean(state.activeSessions[button.dataset.action]));
+    if (timedQuickTypes.includes(button.dataset.action)) {
+      button.textContent = state.activeSessions[button.dataset.action] ? `Stop ${typeConfig[button.dataset.action].label}` : typeConfig[button.dataset.action].label;
+    }
+  });
+  elements.activeSessionCount.textContent = Object.keys(state.activeSessions).length;
+}
+
+function handleQuickLog(type) {
+  if (timedQuickTypes.includes(type)) {
+    toggleTimedQuickLog(type);
+    return;
+  }
+
+  if (type === "food") {
+    recordFoodNow();
+    return;
+  }
+
+  addQuickRecord(type, "", "Quick log");
+}
+
+function addQuickRecord(type, amount, note, time = new Date()) {
+  const dateKey = toKey(time);
+  const record = {
+    id: createId(),
+    type,
+    time: time.toTimeString().slice(0, 5),
+    amount,
+    note,
+  };
+
+  state.records[dateKey] = [...(state.records[dateKey] || []), record];
+  selectedDate = dateKey;
+  visibleMonth = new Date(time.getFullYear(), time.getMonth(), 1);
+  persist();
+  renderMain();
+  elements.quickLogStatus.textContent = `${typeConfig[type].label} saved for ${formatTime(record.time)}.`;
+}
+
+function toggleTimedQuickLog(type) {
+  const now = new Date();
+  const existing = state.activeSessions[type];
+  if (!existing) {
+    state.activeSessions[type] = now.toISOString();
+    persist();
+    renderQuickLogButtons();
+    elements.quickLogStatus.textContent = `${typeConfig[type].label} started at ${formatTime(now.toTimeString().slice(0, 5))}.`;
+    return;
+  }
+
+  const start = new Date(existing);
+  const minutes = Math.max(1, Math.round((now - start) / 60000));
+  const amount = `${minutes} min`;
+  const note = `${formatTime(start.toTimeString().slice(0, 5))} - ${formatTime(now.toTimeString().slice(0, 5))}`;
+  delete state.activeSessions[type];
+  addQuickRecord(type, amount, note, start);
+  elements.quickLogStatus.textContent = `${typeConfig[type].label} ended. ${amount} saved.`;
+}
+
+function recordFoodNow() {
+  const meal = getCurrentMealSetting();
+  const amount = meal.amount || "Food";
+  const note = [state.foodSettings.type, meal.label].filter(Boolean).join(" - ");
+  addQuickRecord("food", amount, note || "Quick food log");
+}
+
+function getCurrentMealSetting() {
+  const now = new Date();
+  const options = [
+    { key: "morning", label: "Morning", time: state.foodTimes.morning, amount: state.foodSettings.amounts.morning },
+    { key: "afternoon", label: "Afternoon", time: state.foodTimes.afternoon, amount: state.foodSettings.amounts.afternoon },
+    { key: "evening", label: "Evening", time: state.foodTimes.evening, amount: state.foodSettings.amounts.evening },
+  ].filter((item) => item.time);
+
+  if (!options.length) {
+    return { label: "Food", amount: "" };
+  }
+
+  return options
+    .map((item) => ({ ...item, distance: Math.abs(minutesOfDay(item.time) - (now.getHours() * 60 + now.getMinutes())) }))
+    .sort((a, b) => a.distance - b.distance)[0];
+}
+
+function minutesOfDay(time) {
+  const [hours, minutes] = parseTimeParts(time);
+  return hours * 60 + minutes;
+}
+
 function renderCategory() {
-  const config = typeConfig[activeCategory];
+  if (activeCategory === "weight") {
+    renderGrowthCategory();
+    return;
+  }
+
+  const category = getCategoryMeta(activeCategory);
   const records = getCategoryRecords(activeCategory);
-  elements.categoryTitle.textContent = `${config.label} Records`;
+  elements.categoryTitle.textContent = `${category.label} Records`;
   elements.categoryCount.textContent = records.length;
   elements.categoryList.innerHTML = "";
 
   if (!records.length) {
     const range = activeCategory === "vaccine" ? "yet" : "this month";
-    elements.categoryList.innerHTML = `<p class="empty-state">No ${config.label.toLowerCase()} records ${range}.</p>`;
+    elements.categoryList.innerHTML = `<p class="empty-state">No ${category.label.toLowerCase()} records ${range}.</p>`;
     return;
   }
 
   records.forEach((entry) => {
     const item = document.createElement("article");
     item.className = "category-item";
-    const detail = getCategoryDetail(entry);
+    const detail = getCategoryDetail(entry, activeCategory);
     item.innerHTML = `
       <div class="category-date">${escapeHtml(formatShortDate(entry.date))}<br>${escapeHtml(formatTime(entry.time))}</div>
       <div>
@@ -460,7 +587,81 @@ function renderCategory() {
   });
 }
 
+function renderGrowthCategory() {
+  const weights = getWeightRecords();
+  elements.categoryTitle.textContent = "Weight Records";
+  elements.categoryCount.textContent = weights.length;
+
+  if (!weights.length) {
+    elements.categoryList.innerHTML = `<p class="empty-state">No weight records yet. Add weight records to draw the graph.</p>`;
+    return;
+  }
+
+  elements.categoryList.innerHTML = `
+    <div class="weight-graph-card">
+      ${renderWeightGraph(weights)}
+      <div class="weight-graph-meta">
+        <span>${escapeHtml(weights[0].date)}: ${weights[0].value.toFixed(1)}kg</span>
+        <span>${escapeHtml(weights[weights.length - 1].date)}: ${weights[weights.length - 1].value.toFixed(1)}kg</span>
+      </div>
+    </div>
+    ${weights
+      .slice()
+      .reverse()
+      .map(
+        (entry) => `
+          <article class="category-item">
+            <div class="category-date">${escapeHtml(formatShortDate(entry.date))}</div>
+            <div>
+              <p class="category-detail">${entry.value.toFixed(1)}kg</p>
+              <p class="category-subtext">Weight record</p>
+            </div>
+          </article>
+        `
+      )
+      .join("")}
+  `;
+}
+
+function renderWeightGraph(weights) {
+  const width = Math.max(360, weights.length * 86);
+  const height = 180;
+  const padding = 28;
+  const values = weights.map((item) => item.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const countRange = Math.max(weights.length - 1, 1);
+  const points = weights.map((item, index) => {
+    const x = padding + (index / countRange) * (width - padding * 2);
+    const y = height - padding - ((item.value - min) / range) * (height - padding * 2);
+    return { x, y, item };
+  });
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+
+  return `
+    <svg class="weight-graph" viewBox="0 0 ${width} ${height}" role="img" aria-label="Weight growth graph">
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="graph-axis" />
+      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="graph-axis" />
+      <path d="${path}" class="graph-line" />
+      ${points
+        .map(
+          (point) => `
+            <circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4" class="graph-dot" />
+            <text x="${point.x.toFixed(1)}" y="${Math.max(12, point.y - 8).toFixed(1)}" class="graph-label">${point.item.value.toFixed(1)}</text>
+          `
+        )
+        .join("")}
+    </svg>
+  `;
+}
+
 function saveRecord() {
+  if (editingRecordId) {
+    updateEditedRecord();
+    return;
+  }
+
   const record = {
     id: createId(),
     type: activeType,
@@ -491,6 +692,53 @@ function saveRecord() {
   renderDayView();
 }
 
+function startEditRecord(record) {
+  editingRecordId = record.id;
+  activeType = record.type;
+  elements.recordTime.value = record.time;
+  elements.recordAmount.value = record.amount || "";
+  elements.recordNote.value = record.note || "";
+  document.querySelectorAll(".type-button").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.type === activeType);
+  });
+  updateAmountField();
+  elements.saveRecord.textContent = "Update";
+  elements.cancelEditRecord.hidden = false;
+  elements.recordAmount.focus();
+}
+
+function updateEditedRecord() {
+  const records = state.records[selectedDate] || [];
+  const record = records.find((entry) => entry.id === editingRecordId);
+  if (!record) {
+    clearEditMode();
+    return;
+  }
+
+  record.type = activeType;
+  record.time = elements.recordTime.value || record.time;
+  record.amount = elements.recordAmount.value.trim();
+  record.note = elements.recordNote.value.trim();
+  if (record.type === "weight") {
+    const parsedWeight = parseWeight(record.amount);
+    if (Number.isFinite(parsedWeight)) {
+      state.profile.weightKg = parsedWeight;
+    }
+  }
+  syncProfileWeightFromRecords();
+  persist();
+  clearEditMode();
+  renderDayView();
+}
+
+function clearEditMode() {
+  editingRecordId = null;
+  elements.recordAmount.value = "";
+  elements.recordNote.value = "";
+  elements.saveRecord.textContent = "Save";
+  elements.cancelEditRecord.hidden = true;
+}
+
 async function addPhotosFromInput(input, dateKey) {
   const files = Array.from(input.files || []);
   for (const file of files) {
@@ -504,9 +752,14 @@ async function addPhotosFromInput(input, dateKey) {
 }
 
 function getCategoryRecords(type) {
+  const typeMap = {
+    potty: ["pee", "poop"],
+    activity: ["play", "train"],
+  };
+  const matchedTypes = typeMap[type] || [type];
   const entries = Object.entries(state.records).flatMap(([date, records]) =>
     records
-      .filter((record) => record.type === type)
+      .filter((record) => matchedTypes.includes(record.type))
       .map((record) => ({ ...record, date }))
   );
 
@@ -514,6 +767,9 @@ function getCategoryRecords(type) {
     type === "vaccine"
       ? entries
       : entries.filter((entry) => {
+          if (["potty", "activity", "sleep", "walk", "food", "school"].includes(type)) {
+            return entry.date === toKey(today);
+          }
           const [year, month] = entry.date.split("-").map(Number);
           return year === visibleMonth.getFullYear() && month === visibleMonth.getMonth() + 1;
         });
@@ -521,7 +777,28 @@ function getCategoryRecords(type) {
   return filtered.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
 }
 
-function getCategoryDetail(entry) {
+function getCategoryMeta(type) {
+  if (type === "potty") {
+    return { label: "Pee & Poop" };
+  }
+  if (type === "activity") {
+    return { label: "Play & Train" };
+  }
+  if (type === "sleep") {
+    return { label: "Sleep" };
+  }
+  return { label: typeConfig[type]?.label || "Records" };
+}
+
+function getCategoryDetail(entry, activeCategoryType = "") {
+  const typeLabel = typeConfig[entry.type]?.label || entry.type;
+  if (activeCategoryType === "potty" || activeCategoryType === "activity") {
+    return {
+      primary: [entry.amount || formatTime(entry.time), typeLabel].filter(Boolean).join(" - "),
+      secondary: entry.note,
+    };
+  }
+
   if (entry.type === "walk") {
     return {
       primary: [entry.amount || "Walk", entry.note].filter(Boolean).join(" - "),
@@ -581,7 +858,6 @@ function getLatestPhoto() {
 
 function hydrateMainProfile() {
   elements.puppyName.value = state.profile.name;
-  elements.puppyBirthday.value = state.profile.birthday;
   elements.adultWeight.value = state.profile.weightKg;
 }
 
@@ -605,9 +881,13 @@ function hydrateProfileForm() {
   elements.enableVaccineAlarm.textContent = state.settings.vaccineAlarmEnabled ? "On" : "Enable";
   elements.enableSchoolAlarm.textContent = state.settings.schoolAlarmEnabled ? "On" : "Enable";
   elements.enableFoodAlarm.textContent = state.settings.foodAlarmEnabled ? "On" : "Enable";
+  elements.foodType.value = state.foodSettings.type;
   elements.foodTimeMorning.value = state.foodTimes.morning;
   elements.foodTimeAfternoon.value = state.foodTimes.afternoon;
   elements.foodTimeEvening.value = state.foodTimes.evening;
+  elements.foodAmountMorning.value = state.foodSettings.amounts.morning;
+  elements.foodAmountAfternoon.value = state.foodSettings.amounts.afternoon;
+  elements.foodAmountEvening.value = state.foodSettings.amounts.evening;
   elements.syncCode.value = state.sync.code;
   elements.syncUrl.value = state.sync.url;
   elements.syncKey.value = state.sync.key;
@@ -634,6 +914,10 @@ function syncProfileFromForm() {
   state.foodTimes.morning = elements.foodTimeMorning.value;
   state.foodTimes.afternoon = elements.foodTimeAfternoon.value;
   state.foodTimes.evening = elements.foodTimeEvening.value;
+  state.foodSettings.type = elements.foodType.value.trim();
+  state.foodSettings.amounts.morning = elements.foodAmountMorning.value.trim();
+  state.foodSettings.amounts.afternoon = elements.foodAmountAfternoon.value.trim();
+  state.foodSettings.amounts.evening = elements.foodAmountEvening.value.trim();
 }
 
 function getProfileInputs() {
@@ -654,9 +938,13 @@ function getProfileInputs() {
     elements.schoolEndDate,
     elements.rabiesDate,
     elements.rabiesValidUntil,
+    elements.foodType,
     elements.foodTimeMorning,
     elements.foodTimeAfternoon,
     elements.foodTimeEvening,
+    elements.foodAmountMorning,
+    elements.foodAmountAfternoon,
+    elements.foodAmountEvening,
   ];
 }
 
@@ -992,6 +1280,32 @@ function renderSyncStatus(message) {
   elements.syncStatus.textContent = message;
 }
 
+function handleTouchStart(event) {
+  const touch = event.changedTouches[0];
+  touchStartX = touch.clientX;
+  touchStartY = touch.clientY;
+}
+
+function handleTouchEnd(event) {
+  if (currentView === "main" || isEditableElement(event.target)) {
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  const deltaX = touch.clientX - touchStartX;
+  const deltaY = Math.abs(touch.clientY - touchStartY);
+  const edgeSwipe = touchStartX <= 48 && deltaX > 80 && deltaY < 55;
+  const broadSwipe = deltaX > 130 && deltaY < 45;
+
+  if (edgeSwipe || broadSwipe) {
+    showMainView();
+  }
+}
+
+function isEditableElement(target) {
+  return ["INPUT", "TEXTAREA", "SELECT", "OPTION"].includes(target?.tagName);
+}
+
 function getCalendarDates() {
   const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
   const startOffset = (firstDay.getDay() + 6) % 7;
@@ -1064,8 +1378,8 @@ function loadState() {
   const key = toKey(today);
   return migrateState({
     profile: {
-      name: "Mochi",
-      birthday: shiftMonthKey(today, -4),
+      name: "Leo",
+      birthday: "2026-03-14",
       breed: "",
       weightKg: 5.1,
       notes: "",
@@ -1074,7 +1388,9 @@ function loadState() {
     school: { name: "", trainer: "", contact: "", notes: "" },
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
+    foodSettings: { type: "Puppy food", amounts: { morning: "110g", afternoon: "", evening: "120g" } },
     sync: { code: "", url: "", key: "", lastSync: "" },
+    activeSessions: {},
     vaccination: { rabiesDate: "", rabiesValidUntil: "" },
     settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
     photos: [],
@@ -1095,6 +1411,8 @@ function migrateState(value) {
   const profile = value.profile || {};
   const ageMonths = Number(profile.ageMonths) || 4;
   const legacyWeight = Number(profile.weightKg || profile.expectedAdultWeightKg) || 12;
+  const migratedName = !profile.name || profile.name === "Mochi" ? "Leo" : profile.name;
+  const migratedBirthday = !profile.birthday || profile.name === "Mochi" ? "2026-03-14" : profile.birthday;
   const photos = Array.isArray(value.photos)
     ? value.photos.map((photo) => {
         if (typeof photo === "string") {
@@ -1110,8 +1428,8 @@ function migrateState(value) {
 
   return {
     profile: {
-      name: profile.name || "Puppy",
-      birthday: profile.birthday || shiftMonthKey(today, -ageMonths),
+      name: migratedName,
+      birthday: migratedBirthday || shiftMonthKey(today, -ageMonths),
       breed: profile.breed || "",
       weightKg: legacyWeight,
       notes: profile.notes || "",
@@ -1136,12 +1454,21 @@ function migrateState(value) {
       afternoon: value.foodTimes?.afternoon || "",
       evening: value.foodTimes?.evening || "18:30",
     },
+    foodSettings: {
+      type: value.foodSettings?.type || "",
+      amounts: {
+        morning: value.foodSettings?.amounts?.morning || "",
+        afternoon: value.foodSettings?.amounts?.afternoon || "",
+        evening: value.foodSettings?.amounts?.evening || "",
+      },
+    },
     sync: {
       code: value.sync?.code || "",
       url: value.sync?.url || "",
       key: value.sync?.key || "",
       lastSync: value.sync?.lastSync || "",
     },
+    activeSessions: value.activeSessions || {},
     vaccination: {
       rabiesDate: value.vaccination?.rabiesDate || "",
       rabiesValidUntil: value.vaccination?.rabiesValidUntil || "",
