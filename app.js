@@ -104,6 +104,9 @@ const elements = {
   syncKey: document.querySelector("#syncKey"),
   pushSyncButton: document.querySelector("#pushSyncButton"),
   pullSyncButton: document.querySelector("#pullSyncButton"),
+  pushFirebaseButton: document.querySelector("#pushFirebaseButton"),
+  pullFirebaseButton: document.querySelector("#pullFirebaseButton"),
+  firebaseConfig: document.querySelector("#firebaseConfig"),
   exportDataButton: document.querySelector("#exportDataButton"),
   importDataInput: document.querySelector("#importDataInput"),
   syncStatus: document.querySelector("#syncStatus"),
@@ -229,14 +232,17 @@ function bindEvents() {
   elements.installAppButton.addEventListener("click", installPwa);
   elements.pushSyncButton.addEventListener("click", pushCloudSync);
   elements.pullSyncButton.addEventListener("click", pullCloudSync);
+  elements.pushFirebaseButton.addEventListener("click", pushFirebaseSync);
+  elements.pullFirebaseButton.addEventListener("click", pullFirebaseSync);
   elements.exportDataButton.addEventListener("click", exportData);
   elements.importDataInput.addEventListener("change", importData);
 
-  [elements.syncCode, elements.syncUrl, elements.syncKey].forEach((input) => {
+  [elements.syncCode, elements.syncUrl, elements.syncKey, elements.firebaseConfig].forEach((input) => {
     input.addEventListener("input", () => {
       state.sync.code = elements.syncCode.value.trim();
       state.sync.url = elements.syncUrl.value.trim();
       state.sync.key = elements.syncKey.value.trim();
+      state.sync.firebaseConfig = elements.firebaseConfig.value.trim();
       persist();
     });
   });
@@ -891,6 +897,7 @@ function hydrateProfileForm() {
   elements.syncCode.value = state.sync.code;
   elements.syncUrl.value = state.sync.url;
   elements.syncKey.value = state.sync.key;
+  elements.firebaseConfig.value = state.sync.firebaseConfig;
   renderSyncStatus(state.sync.lastSync ? `Last sync: ${state.sync.lastSync}` : "Use the same sync code on each phone. Push uploads this puppy book; Pull downloads the shared copy.");
 }
 
@@ -1280,6 +1287,86 @@ function renderSyncStatus(message) {
   elements.syncStatus.textContent = message;
 }
 
+async function pushFirebaseSync() {
+  const settings = validateFirebaseSettings();
+  if (!settings) {
+    return;
+  }
+
+  renderSyncStatus("Pushing to Firebase...");
+  try {
+    const response = await fetch(getFirebaseDocumentUrl(settings), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          bookData: { stringValue: JSON.stringify(getSyncPayload()) },
+          updatedAt: { timestampValue: new Date().toISOString() },
+        },
+      }),
+    });
+    if (!response.ok) {
+      throw new Error("Firebase push failed");
+    }
+    state.sync.lastSync = new Date().toLocaleString();
+    persist();
+    renderSyncStatus(`Pushed to Firebase sync code "${state.sync.code}".`);
+  } catch {
+    renderSyncStatus("Firebase push failed. Check Firestore rules, project config, and internet connection.");
+  }
+}
+
+async function pullFirebaseSync() {
+  const settings = validateFirebaseSettings();
+  if (!settings) {
+    return;
+  }
+
+  renderSyncStatus("Pulling from Firebase...");
+  try {
+    const response = await fetch(getFirebaseDocumentUrl(settings));
+    if (!response.ok) {
+      throw new Error("Firebase pull failed");
+    }
+    const documentData = await response.json();
+    const rawPayload = documentData.fields?.bookData?.stringValue;
+    if (!rawPayload) {
+      renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
+      return;
+    }
+    applySyncedPayload(JSON.parse(rawPayload));
+    renderSyncStatus(`Pulled Firebase sync code "${state.sync.code}".`);
+  } catch {
+    renderSyncStatus("Firebase pull failed. Check Firestore rules, project config, and internet connection.");
+  }
+}
+
+function validateFirebaseSettings() {
+  state.sync.code = elements.syncCode.value.trim();
+  state.sync.firebaseConfig = elements.firebaseConfig.value.trim();
+  persist();
+
+  if (!state.sync.code || !state.sync.firebaseConfig) {
+    renderSyncStatus("Add a sync code and Firebase config JSON first.");
+    return null;
+  }
+
+  try {
+    const config = JSON.parse(state.sync.firebaseConfig);
+    if (!config.projectId) {
+      throw new Error("Missing projectId");
+    }
+    return config;
+  } catch {
+    renderSyncStatus("Firebase config must be valid JSON and include projectId.");
+    return null;
+  }
+}
+
+function getFirebaseDocumentUrl(config) {
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/(default)/documents/puppy_books/${encodeURIComponent(state.sync.code)}`;
+}
+
 function handleTouchStart(event) {
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
@@ -1389,7 +1476,7 @@ function loadState() {
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
     foodSettings: { type: "Puppy food", amounts: { morning: "110g", afternoon: "", evening: "120g" } },
-    sync: { code: "", url: "", key: "", lastSync: "" },
+    sync: { code: "", url: "", key: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
     vaccination: { rabiesDate: "", rabiesValidUntil: "" },
     settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
@@ -1466,6 +1553,7 @@ function migrateState(value) {
       code: value.sync?.code || "",
       url: value.sync?.url || "",
       key: value.sync?.key || "",
+      firebaseConfig: value.sync?.firebaseConfig || "",
       lastSync: value.sync?.lastSync || "",
     },
     activeSessions: value.activeSessions || {},

@@ -63,3 +63,66 @@ Then in the app:
 6. Tap `Pull` on another phone.
 
 Important: this simple shared-code model is convenient for family use, but anyone with the Supabase URL, anon key, and sync code can access that puppy book. Use a private/random sync code.
+
+## Free Sync With Firebase Spark
+
+Firebase Spark is Google's no-cost plan. Cloud Firestore has a free quota for one database per project, including daily free reads/writes and 1 GiB stored data. See Firebase's official Firestore pricing page for current limits: https://firebase.google.com/docs/firestore/pricing
+
+### Firebase Setup
+
+1. Go to https://console.firebase.google.com/
+2. Create a project.
+3. Open `Build > Firestore Database`.
+4. Create a Firestore database.
+5. Choose a region.
+6. Start in test mode for first setup, then replace rules with the rules below.
+7. Open `Project settings > General`.
+8. Under `Your apps`, add a Web app.
+9. Copy the Firebase config object. It looks like:
+
+```js
+const firebaseConfig = {
+  apiKey: "...",
+  authDomain: "...",
+  projectId: "...",
+  storageBucket: "...",
+  messagingSenderId: "...",
+  appId: "..."
+};
+```
+
+10. In Puppy Record Book, open `T > App & Sync`.
+11. Put a private `Sync code`, for example `leo-family-8392`.
+12. Paste only the JSON part into `Firebase config JSON`, like:
+
+```json
+{
+  "apiKey": "...",
+  "authDomain": "...",
+  "projectId": "...",
+  "storageBucket": "...",
+  "messagingSenderId": "...",
+  "appId": "..."
+}
+```
+
+13. Tap `Push Firebase` on the phone with the latest data.
+14. Tap `Pull Firebase` on the other phone.
+
+### Firestore Rules
+
+Use these rules for the simple shared-code version:
+
+```txt
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /puppy_books/{syncCode} {
+      allow read, write: if syncCode.size() >= 12;
+    }
+  }
+}
+```
+
+Important: this keeps the app simple, but it is not account-secured. Anyone who knows your Firebase config and sync code can access that shared puppy book. Use a long random sync code.

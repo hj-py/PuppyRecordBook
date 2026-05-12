@@ -25,11 +25,13 @@ body {
     radial-gradient(circle at top left, rgba(127, 166, 184, 0.28), transparent 34rem),
     linear-gradient(145deg, #f5efe2, #e7f0ec 56%, #f9f5ee);
   color: var(--ink);
+  -webkit-text-size-adjust: 100%;
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -171,9 +173,13 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
+  display: block;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
+  min-inline-size: 0;
   height: 38px;
   padding: 0 10px;
   border: 1px solid var(--line);
@@ -181,6 +187,41 @@ select {
   background: var(--paper);
   color: var(--ink);
   outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 16px;
+}
+
+textarea {
+  min-height: 92px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+input[type="date"],
+input[type="time"],
+input[type="number"] {
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+}
+
+input::-webkit-date-and-time-value {
+  min-width: 0;
+  text-align: left;
+}
+
+label,
+.info-grid,
+.profile-fields,
+.quick-form,
+.day-panel,
+.category-panel,
+.info-panel,
+.photo-album-panel,
+.photo-strip {
+  min-width: 0;
 }
 
 input:focus,
@@ -319,6 +360,7 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbf7ef;
+  overflow: hidden;
 }
 
 .quick-log-grid {

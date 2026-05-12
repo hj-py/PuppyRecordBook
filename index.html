@@ -340,10 +340,16 @@
                 Supabase anon key
                 <input id="syncKey" placeholder="Public anon key" />
               </label>
+              <label>
+                Firebase config JSON
+                <textarea id="firebaseConfig" placeholder='{"apiKey":"...","projectId":"...","appId":"..."}'></textarea>
+              </label>
             </div>
             <div class="sync-actions">
               <button id="pushSyncButton" class="primary-button" type="button">Push</button>
               <button id="pullSyncButton" class="quiet-button" type="button">Pull</button>
+              <button id="pushFirebaseButton" class="primary-button" type="button">Push Firebase</button>
+              <button id="pullFirebaseButton" class="quiet-button" type="button">Pull Firebase</button>
               <button id="exportDataButton" class="quiet-button" type="button">Export</button>
               <label class="small-photo-button" for="importDataInput">Import</label>
               <input id="importDataInput" type="file" accept="application/json" />
