@@ -35,7 +35,9 @@ let touchStartY = 0;
 let editingRecordId = null;
 let firebaseServices = null;
 let autoSyncTimer = null;
+let firebasePollTimer = null;
 let autoSyncInProgress = false;
+let firebasePollInProgress = false;
 let persistOptions = {};
 let selectedStatusYear = today.getFullYear();
 
@@ -139,6 +141,7 @@ function init() {
   registerServiceWorker();
   initPwaInstall();
   startAlarmTimer();
+  startFirebasePolling();
   renderMain();
 }
 
@@ -1714,6 +1717,51 @@ async function autoFirebaseSync() {
 
 function hasFirebaseSettings() {
   return Boolean(state.sync.code && state.sync.code.length >= 12 && state.sync.firebaseConfig);
+}
+
+function startFirebasePolling() {
+  window.clearInterval(firebasePollTimer);
+  firebasePollTimer = window.setInterval(pollFirebaseSync, 15000);
+  window.addEventListener("focus", pollFirebaseSync);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      pollFirebaseSync();
+    }
+  });
+}
+
+async function pollFirebaseSync() {
+  if (!hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress) {
+    return;
+  }
+
+  const settings = getFirebaseSettingsSilently();
+  if (!settings) {
+    return;
+  }
+
+  firebasePollInProgress = true;
+  try {
+    const services = await getFirebaseServices(settings);
+    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
+    if (snapshot.exists()) {
+      mergeSyncedPayload(snapshot.data().bookData);
+      renderSyncStatus(`Checked Firebase sync at ${new Date().toLocaleTimeString()}.`);
+    }
+  } catch {
+    // Keep polling quiet so a temporary network issue does not interrupt logging.
+  } finally {
+    firebasePollInProgress = false;
+  }
+}
+
+function getFirebaseSettingsSilently() {
+  try {
+    const config = parseFirebaseConfig(state.sync.firebaseConfig);
+    return config.projectId ? config : null;
+  } catch {
+    return null;
+  }
 }
 
 function mergeSyncedPayload(payload) {
