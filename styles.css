@@ -422,6 +422,22 @@ select:focus {
   background: #e8f5f8;
 }
 
+.active-session-timers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.active-session-timers span {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #eef3ee;
+  color: var(--leaf-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .info-grid {
   display: grid;
   gap: 10px;

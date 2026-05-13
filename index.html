@@ -74,6 +74,7 @@
               <button type="button" class="quick-log-button water" data-action="water">Water</button>
               <button type="button" class="quick-log-button timed" data-action="box">Box</button>
             </div>
+            <div id="activeSessionTimers" class="active-session-timers"></div>
             <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk, play, sleep, train, and box use start/stop.</p>
           </section>
 
@@ -381,10 +382,9 @@
             <div class="sync-actions">
               <button id="pushFirebaseButton" class="primary-button" type="button">Push Firebase</button>
               <button id="pullFirebaseButton" class="quiet-button" type="button">Pull Firebase</button>
-              <button id="exportDataButton" class="quiet-button" type="button">Export</button>
               <button id="exportExcelButton" class="quiet-button" type="button">Excel</button>
-              <label class="small-photo-button" for="importDataInput">Import</label>
-              <input id="importDataInput" type="file" accept="application/json" />
+              <label class="small-photo-button" for="importDataInput">Import Excel</label>
+              <input id="importDataInput" type="file" accept=".csv,text/csv" />
             </div>
             <p id="syncStatus" class="legal-note">Use the same sync code and Firebase config on each phone. Auto-sync runs after edits.</p>
           </section>

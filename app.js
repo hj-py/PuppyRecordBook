@@ -36,6 +36,7 @@ let editingRecordId = null;
 let firebaseServices = null;
 let autoSyncTimer = null;
 let firebasePollTimer = null;
+let activeTimerInterval = null;
 let autoSyncInProgress = false;
 let firebasePollInProgress = false;
 let persistOptions = {};
@@ -82,6 +83,7 @@ const elements = {
   monthlyStats: document.querySelector("#monthlyStats"),
   statusYearSelect: document.querySelector("#statusYearSelect"),
   activeSessionCount: document.querySelector("#activeSessionCount"),
+  activeSessionTimers: document.querySelector("#activeSessionTimers"),
   quickLogStatus: document.querySelector("#quickLogStatus"),
   heroPhoto: document.querySelector("#heroPhoto"),
   photoInput: document.querySelector("#photoInput"),
@@ -120,7 +122,6 @@ const elements = {
   pushFirebaseButton: document.querySelector("#pushFirebaseButton"),
   pullFirebaseButton: document.querySelector("#pullFirebaseButton"),
   firebaseConfig: document.querySelector("#firebaseConfig"),
-  exportDataButton: document.querySelector("#exportDataButton"),
   exportExcelButton: document.querySelector("#exportExcelButton"),
   importDataInput: document.querySelector("#importDataInput"),
   syncStatus: document.querySelector("#syncStatus"),
@@ -142,6 +143,7 @@ function init() {
   initPwaInstall();
   startAlarmTimer();
   startFirebasePolling();
+  startActiveSessionTimer();
   renderMain();
 }
 
@@ -279,7 +281,6 @@ function bindEvents() {
   elements.installAppButton.addEventListener("click", installPwa);
   elements.pushFirebaseButton.addEventListener("click", pushFirebaseSync);
   elements.pullFirebaseButton.addEventListener("click", pullFirebaseSync);
-  elements.exportDataButton.addEventListener("click", exportData);
   elements.exportExcelButton.addEventListener("click", exportExcelData);
   elements.importDataInput.addEventListener("change", importData);
 
@@ -502,10 +503,21 @@ function renderQuickLogButtons() {
     const session = getActiveSession(button.dataset.action);
     button.classList.toggle("active", Boolean(session));
     if (timedQuickTypes.includes(button.dataset.action)) {
-      button.textContent = session ? `Stop ${typeConfig[button.dataset.action].label}` : typeConfig[button.dataset.action].label;
+      const label = typeConfig[button.dataset.action].label;
+      button.textContent = session ? `Stop ${label} ${getElapsedSessionText(session)}` : label;
     }
   });
-  elements.activeSessionCount.textContent = Object.values(state.activeSessions || {}).filter(Boolean).length;
+  const sessions = Object.entries(state.activeSessions || {})
+    .map(([type, value]) => [type, normalizeActiveSession(type, value)])
+    .filter(([, session]) => session?.start);
+  elements.activeSessionCount.textContent = sessions.length;
+  elements.activeSessionTimers.innerHTML = sessions
+    .map(
+      ([type, session]) => `
+        <span>${escapeHtml(typeConfig[type]?.label || type)} ${escapeHtml(getElapsedSessionText(session))}</span>
+      `
+    )
+    .join("");
 }
 
 function handleQuickLog(type) {
@@ -570,6 +582,30 @@ function toggleTimedQuickLog(type) {
 
 function getActiveSession(type) {
   return normalizeActiveSession(type, state.activeSessions?.[type]);
+}
+
+function startActiveSessionTimer() {
+  window.clearInterval(activeTimerInterval);
+  activeTimerInterval = window.setInterval(() => {
+    if (currentView === "main" && Object.keys(state.activeSessions || {}).length) {
+      renderQuickLogButtons();
+    }
+  }, 1000);
+}
+
+function getElapsedSessionText(session) {
+  const start = new Date(session.start);
+  if (!Number.isFinite(start.getTime())) {
+    return "0:00";
+  }
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+  if (hours) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function recordFoodNow() {
@@ -1562,18 +1598,6 @@ function applySyncedPayload(payload) {
   renderReminderSections();
 }
 
-function exportData() {
-  const blob = new Blob([JSON.stringify(getSyncPayload(), null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `puppy-record-book-${state.sync.code || "backup"}.json`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(link.href);
-  renderSyncStatus("Exported a backup file.");
-}
-
 function exportExcelData() {
   const rows = [["Date", "Type", "Time", "Start", "End", "Duration minutes", "Amount", "Note"]];
   Object.entries(state.records)
@@ -1620,14 +1644,145 @@ function importData(event) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      applySyncedPayload(JSON.parse(reader.result));
-      renderSyncStatus("Imported puppy book data.");
-    } catch {
-      renderSyncStatus("Import failed. Please choose a valid Puppy Record Book JSON file.");
+      const imported = importExcelRows(String(reader.result || ""));
+      renderSyncStatus(`Imported ${imported} records from Excel CSV.`);
+    } catch (error) {
+      renderSyncStatus(`Import failed: ${error.message || "use the same CSV format as Excel export."}`);
     }
     elements.importDataInput.value = "";
   };
   reader.readAsText(file);
+}
+
+function importExcelRows(csvText) {
+  const rows = parseCsv(csvText.replace(/^\ufeff/, ""));
+  if (rows.length < 2) {
+    throw new Error("no record rows found.");
+  }
+  const headers = rows[0].map((header) => header.trim().toLowerCase());
+  const required = ["date", "type", "time", "start", "end", "duration minutes", "amount", "note"];
+  const indexes = Object.fromEntries(required.map((header) => [header, headers.indexOf(header)]));
+  if (["date", "type", "time"].some((header) => indexes[header] < 0)) {
+    throw new Error("CSV must use the exported columns.");
+  }
+
+  let imported = 0;
+  rows.slice(1).forEach((row) => {
+    const date = normalizeImportDate(row[indexes.date]);
+    const type = normalizeImportType(row[indexes.type]);
+    if (!date || !type) {
+      return;
+    }
+    const startTime = normalizeImportTime(row[indexes.start]) || normalizeImportTime(row[indexes.time]);
+    const endTime = normalizeImportTime(row[indexes.end]);
+    const duration = Number(row[indexes["duration minutes"]]) || (startTime && endTime ? durationFromTimes(startTime, endTime) : 0);
+    const record = {
+      id: createId(),
+      type,
+      time: normalizeImportTime(row[indexes.time]) || startTime || "00:00",
+      amount: row[indexes.amount] || "",
+      note: row[indexes.note] || "",
+    };
+    if (timedRecordTypes.includes(type)) {
+      record.startTime = startTime || record.time;
+      record.durationMinutes = Math.max(1, duration || parseDurationMinutes(record.amount) || 1);
+      record.endTime = endTime || addMinutesToTime(record.startTime, record.durationMinutes);
+      record.amount = `${record.durationMinutes} min`;
+    }
+    if (isDuplicateImportedRecord(date, record)) {
+      return;
+    }
+    state.records[date] = [...(state.records[date] || []), record];
+    imported += 1;
+  });
+
+  if (!imported) {
+    throw new Error("no new records found.");
+  }
+  syncProfileWeightFromRecords();
+  persist();
+  refreshCurrentView();
+  return imported;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      index += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(cell);
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      if (row.some((value) => value.trim())) {
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+  row.push(cell);
+  if (row.some((value) => value.trim())) {
+    rows.push(row);
+  }
+  return rows;
+}
+
+function normalizeImportType(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return Object.keys(typeConfig).find((type) => type === normalized || typeConfig[type].label.toLowerCase() === normalized) || "";
+}
+
+function normalizeImportDate(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+  const slash = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    return `${slash[3]}-${slash[1].padStart(2, "0")}-${slash[2].padStart(2, "0")}`;
+  }
+  return "";
+}
+
+function normalizeImportTime(value) {
+  const text = String(value || "").trim();
+  const time24 = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (time24) {
+    return `${time24[1].padStart(2, "0")}:${time24[2]}`;
+  }
+  const time12 = text.match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (time12) {
+    let hour = Number(time12[1]);
+    if (time12[3].toUpperCase() === "PM" && hour < 12) hour += 12;
+    if (time12[3].toUpperCase() === "AM" && hour === 12) hour = 0;
+    return `${String(hour).padStart(2, "0")}:${time12[2]}`;
+  }
+  return "";
+}
+
+function isDuplicateImportedRecord(date, record) {
+  return (state.records[date] || []).some(
+    (entry) =>
+      entry.type === record.type &&
+      entry.time === record.time &&
+      (entry.amount || "") === (record.amount || "") &&
+      (entry.note || "") === (record.note || "")
+  );
 }
 
 function renderSyncStatus(message) {
