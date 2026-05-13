@@ -880,7 +880,7 @@ async function addProfilePhotoFromInput(input) {
   const files = Array.from(input.files || []);
   const file = files[0];
   if (file) {
-    const photo = await fileToDataUrl(file);
+    const photo = await imageFileToProfileDataUrl(file);
     state.photos = [{ id: createId(), src: photo, date: toKey(today), name: file.name || "puppy-photo.jpg" }];
   }
   input.value = "";
@@ -2132,9 +2132,41 @@ function migrateState(value) {
 
 function persist(options = {}) {
   persistOptions = options;
-  localStorage.setItem(storageKey, JSON.stringify(state));
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(state));
+  } catch {
+    if (state.photos.length) {
+      state.photos = [];
+      elements.heroPhoto.src = defaultPhoto;
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    }
+  }
   scheduleAutoFirebaseSync();
   persistOptions = {};
+}
+
+function imageFileToProfileDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const maxSize = 360;
+      const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+      const width = Math.max(1, Math.round(image.naturalWidth * scale));
+      const height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, width, height);
+      URL.revokeObjectURL(image.src);
+      resolve(canvas.toDataURL("image/jpeg", 0.78));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(image.src);
+      fileToDataUrl(file).then(resolve).catch(reject);
+    };
+    image.src = URL.createObjectURL(file);
+  });
 }
 
 function fileToDataUrl(file) {
