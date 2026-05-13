@@ -1814,12 +1814,18 @@ function validateFirebaseSettings() {
 
 function parseFirebaseConfig(value) {
   let text = value.trim();
-  const assignmentMatch = text.match(/firebaseConfig\s*=\s*({[\s\S]*?})\s*;?/);
+  text = text
+    .replace(/\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*export\s+/gm, "")
+    .trim();
+  const assignmentMatch = text.match(/(?:const|let|var)?\s*(?:window\.)?firebaseConfig\s*=\s*({[\s\S]*?})\s*;?/);
   if (assignmentMatch) {
     text = assignmentMatch[1];
   }
   text = text
     .replace(/^(?:const|let|var)\s+firebaseConfig\s*=\s*/, "")
+    .replace(/^window\.firebaseConfig\s*=\s*/, "")
     .replace(/^firebaseConfig\s*=\s*/, "")
     .replace(/;$/, "")
     .trim();
@@ -1830,10 +1836,11 @@ function parseFirebaseConfig(value) {
     throw new Error("Not a config object");
   }
   try {
-    return JSON.parse(text);
+    return JSON.parse(text.replace(/,\s*([}\]])/g, "$1"));
   } catch {
     const jsonish = text
       .replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":')
+      .replace(/,\s*([}\]])/g, "$1")
       .replace(/'/g, '"');
     return JSON.parse(jsonish);
   }
