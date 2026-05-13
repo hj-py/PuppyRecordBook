@@ -45,22 +45,58 @@ let firebasePollInProgress = false;
 let importInProgress = false;
 let persistOptions = {};
 let selectedStatusYear = today.getFullYear();
+let activeCalendarType = "walk";
+let calendarEditingRecordId = null;
+let homeBookmarkMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+let selectedBookmarkYear = today.getFullYear();
 
 const elements = {
   mainView: document.querySelector("#mainView"),
   dayView: document.querySelector("#dayView"),
+  calendarView: document.querySelector("#calendarView"),
+  bookmarksView: document.querySelector("#bookmarksView"),
   profileView: document.querySelector("#profileView"),
   statusView: document.querySelector("#statusView"),
   currentMonth: document.querySelector("#currentMonth"),
   profileButton: document.querySelector("#profileButton"),
   statusButton: document.querySelector("#statusButton"),
-  previousMonth: document.querySelector("#previousMonth"),
-  nextMonth: document.querySelector("#nextMonth"),
-  calendarGrid: document.querySelector("#calendarGrid"),
-  backToMain: document.querySelector("#backToMain"),
-  backFromProfile: document.querySelector("#backFromProfile"),
-  backFromStatus: document.querySelector("#backFromStatus"),
+  calendarPageButton: document.querySelector("#calendarPageButton"),
+  bookmarksButton: document.querySelector("#bookmarksButton"),
+  calendarToBookmarks: document.querySelector("#calendarToBookmarks"),
+  bookmarksToCalendar: document.querySelector("#bookmarksToCalendar"),
   statusSettingsButton: document.querySelector("#statusSettingsButton"),
+  calendarPageTitle: document.querySelector("#calendarPageTitle"),
+  calendarPagePreviousMonth: document.querySelector("#calendarPagePreviousMonth"),
+  calendarPageNextMonth: document.querySelector("#calendarPageNextMonth"),
+  calendarPageGrid: document.querySelector("#calendarPageGrid"),
+  calendarSelectedDateLabel: document.querySelector("#calendarSelectedDateLabel"),
+  calendarDaySummary: document.querySelector("#calendarDaySummary"),
+  calendarRecordCount: document.querySelector("#calendarRecordCount"),
+  calendarRecordList: document.querySelector("#calendarRecordList"),
+  openSelectedDayEditor: document.querySelector("#openSelectedDayEditor"),
+  calendarInlineEditor: document.querySelector("#calendarInlineEditor"),
+  calendarEditorDate: document.querySelector("#calendarEditorDate"),
+  calendarEditorTime: document.querySelector("#calendarEditorTime"),
+  calendarEditorStartTime: document.querySelector("#calendarEditorStartTime"),
+  calendarEditorEndTime: document.querySelector("#calendarEditorEndTime"),
+  calendarEditorDuration: document.querySelector("#calendarEditorDuration"),
+  calendarDurationFields: document.querySelector("#calendarDurationFields"),
+  calendarEditorAmount: document.querySelector("#calendarEditorAmount"),
+  calendarEditorNote: document.querySelector("#calendarEditorNote"),
+  calendarAmountField: document.querySelector("#calendarAmountField"),
+  calendarCancelEdit: document.querySelector("#calendarCancelEdit"),
+  calendarSaveRecord: document.querySelector("#calendarSaveRecord"),
+  bookmarkYearTitle: document.querySelector("#bookmarkYearTitle"),
+  bookmarkYearSelect: document.querySelector("#bookmarkYearSelect"),
+  bookmarkCount: document.querySelector("#bookmarkCount"),
+  bookmarkList: document.querySelector("#bookmarkList"),
+  homeMonthlyAverageTitle: document.querySelector("#homeMonthlyAverageTitle"),
+  homeMonthlyAverage: document.querySelector("#homeMonthlyAverage"),
+  homeBookmarkTitle: document.querySelector("#homeBookmarkTitle"),
+  homeBookmarkCount: document.querySelector("#homeBookmarkCount"),
+  homeBookmarkSummary: document.querySelector("#homeBookmarkSummary"),
+  homeBookmarkPreviousMonth: document.querySelector("#homeBookmarkPreviousMonth"),
+  homeBookmarkNextMonth: document.querySelector("#homeBookmarkNextMonth"),
   selectedDateLabel: document.querySelector("#selectedDateLabel"),
   dayDateInput: document.querySelector("#dayDateInput"),
   bookmarkDay: document.querySelector("#bookmarkDay"),
@@ -153,16 +189,6 @@ function init() {
 }
 
 function bindEvents() {
-  elements.previousMonth.addEventListener("click", () => {
-    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);
-    renderMain();
-  });
-
-  elements.nextMonth.addEventListener("click", () => {
-    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
-    renderMain();
-  });
-
   elements.profileButton.addEventListener("click", () => {
     showProfileView();
   });
@@ -171,16 +197,34 @@ function bindEvents() {
     showStatusView();
   });
 
-  elements.backToMain.addEventListener("click", () => {
-    showMainView();
+  document.querySelectorAll(".nav-button").forEach((button) => {
+    button.addEventListener("click", () => navigateToView(button.dataset.view));
   });
 
-  elements.backFromProfile.addEventListener("click", () => {
-    showMainView();
+  elements.calendarPageButton.addEventListener("click", () => {
+    showCalendarView();
   });
 
-  elements.backFromStatus.addEventListener("click", () => {
-    showMainView();
+  elements.bookmarksButton.addEventListener("click", () => {
+    showBookmarksView();
+  });
+
+  elements.calendarToBookmarks.addEventListener("click", () => {
+    showBookmarksView();
+  });
+
+  elements.bookmarksToCalendar.addEventListener("click", () => {
+    showCalendarView();
+  });
+
+  elements.homeBookmarkPreviousMonth.addEventListener("click", () => {
+    homeBookmarkMonth = new Date(homeBookmarkMonth.getFullYear(), homeBookmarkMonth.getMonth() - 1, 1);
+    renderHomeBookmarkSummary();
+  });
+
+  elements.homeBookmarkNextMonth.addEventListener("click", () => {
+    homeBookmarkMonth = new Date(homeBookmarkMonth.getFullYear(), homeBookmarkMonth.getMonth() + 1, 1);
+    renderHomeBookmarkSummary();
   });
 
   elements.statusSettingsButton.addEventListener("click", () => {
@@ -190,6 +234,62 @@ function bindEvents() {
   elements.statusYearSelect.addEventListener("input", () => {
     selectedStatusYear = Number(elements.statusYearSelect.value) || today.getFullYear();
     renderStatusView();
+  });
+
+  elements.bookmarkYearSelect.addEventListener("input", () => {
+    selectedBookmarkYear = Number(elements.bookmarkYearSelect.value) || today.getFullYear();
+    renderBookmarksView();
+  });
+
+  elements.calendarPagePreviousMonth.addEventListener("click", () => {
+    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() - 1, 1);
+    renderCalendarView();
+  });
+
+  elements.calendarPageNextMonth.addEventListener("click", () => {
+    visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1);
+    renderCalendarView();
+  });
+
+  elements.openSelectedDayEditor.addEventListener("click", () => {
+    toggleCalendarEditor();
+  });
+
+  elements.calendarEditorDate.addEventListener("input", () => {
+    if (!elements.calendarEditorDate.value) {
+      return;
+    }
+    selectedDate = elements.calendarEditorDate.value;
+    const date = parseDateKey(selectedDate);
+    visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+    renderCalendarView();
+    elements.calendarInlineEditor.hidden = false;
+    hydrateCalendarEditor();
+  });
+
+  const syncCalendarStartFromMainTime = () => {
+    if (timedRecordTypes.includes(activeCalendarType)) {
+      elements.calendarEditorStartTime.value = elements.calendarEditorTime.value;
+      syncCalendarEndFromDuration();
+    }
+  };
+  elements.calendarEditorTime.addEventListener("input", syncCalendarStartFromMainTime);
+  elements.calendarEditorTime.addEventListener("change", syncCalendarStartFromMainTime);
+  elements.calendarEditorStartTime.addEventListener("input", syncCalendarDurationFromEnd);
+  elements.calendarEditorStartTime.addEventListener("change", syncCalendarDurationFromEnd);
+  elements.calendarEditorEndTime.addEventListener("input", syncCalendarDurationFromEnd);
+  elements.calendarEditorEndTime.addEventListener("change", syncCalendarDurationFromEnd);
+  elements.calendarEditorDuration.addEventListener("input", syncCalendarEndFromDuration);
+  elements.calendarEditorDuration.addEventListener("change", syncCalendarEndFromDuration);
+  elements.calendarSaveRecord.addEventListener("click", saveCalendarRecord);
+  elements.calendarCancelEdit.addEventListener("click", clearCalendarEditMode);
+
+  document.querySelectorAll(".calendar-type-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      activeCalendarType = button.dataset.type;
+      document.querySelectorAll(".calendar-type-button").forEach((item) => item.classList.toggle("selected", item === button));
+      updateCalendarAmountField();
+    });
   });
 
   elements.dayDateInput.addEventListener("input", () => {
@@ -307,17 +407,41 @@ function bindEvents() {
   document.addEventListener("touchend", handleTouchEnd, { passive: true });
 }
 
+function navigateToView(view) {
+  if (view === "status") {
+    showStatusView();
+    return;
+  }
+  if (view === "calendar") {
+    showCalendarView();
+    return;
+  }
+  if (view === "bookmarks") {
+    showBookmarksView();
+    return;
+  }
+  if (view === "profile") {
+    showProfileView();
+    return;
+  }
+  showMainView();
+}
+
 function renderMain() {
   currentView = "main";
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = true;
   elements.profileView.hidden = true;
   elements.statusView.hidden = true;
-  renderCalendar();
+  elements.currentMonth.textContent = formatLongDate(today);
   renderAge();
   renderInsight();
   renderQuickLogButtons();
   renderCategory();
+  renderHomeMonthlyAverage();
+  renderHomeBookmarkSummary();
   elements.heroPhoto.src = getLatestPhoto()?.src || defaultPhoto;
 }
 
@@ -337,6 +461,8 @@ function showDayView(dateKey) {
   visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
   elements.mainView.hidden = true;
   elements.dayView.hidden = false;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = true;
   elements.profileView.hidden = true;
   elements.statusView.hidden = true;
   renderDayView();
@@ -346,15 +472,44 @@ function showMainView() {
   currentView = "main";
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = true;
   elements.profileView.hidden = true;
   elements.statusView.hidden = true;
   renderMain();
+}
+
+function showCalendarView(dateKey = selectedDate) {
+  currentView = "calendar";
+  selectedDate = dateKey;
+  const date = parseDateKey(dateKey);
+  visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+  elements.mainView.hidden = true;
+  elements.dayView.hidden = true;
+  elements.calendarView.hidden = false;
+  elements.bookmarksView.hidden = true;
+  elements.profileView.hidden = true;
+  elements.statusView.hidden = true;
+  renderCalendarView();
+}
+
+function showBookmarksView() {
+  currentView = "bookmarks";
+  elements.mainView.hidden = true;
+  elements.dayView.hidden = true;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = false;
+  elements.profileView.hidden = true;
+  elements.statusView.hidden = true;
+  renderBookmarksView();
 }
 
 function showProfileView() {
   currentView = "profile";
   elements.mainView.hidden = true;
   elements.dayView.hidden = true;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = true;
   elements.profileView.hidden = false;
   elements.statusView.hidden = true;
   hydrateProfileForm();
@@ -365,6 +520,8 @@ function showStatusView() {
   currentView = "status";
   elements.mainView.hidden = true;
   elements.dayView.hidden = true;
+  elements.calendarView.hidden = true;
+  elements.bookmarksView.hidden = true;
   elements.profileView.hidden = true;
   elements.statusView.hidden = false;
   renderStatusView();
@@ -396,9 +553,10 @@ function recordMainWeightChange() {
   persist();
 }
 
-function renderCalendar() {
-  elements.currentMonth.textContent = visibleMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
-  elements.calendarGrid.innerHTML = "";
+function renderCalendarView() {
+  elements.calendarPageTitle.textContent = visibleMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
+  elements.calendarSelectedDateLabel.textContent = formatSelectedDate(selectedDate);
+  elements.calendarPageGrid.innerHTML = "";
 
   getCalendarDates().forEach((day) => {
     const key = toKey(day);
@@ -415,9 +573,372 @@ function renderCalendar() {
       ${isDateBookmarked(key) ? '<span class="day-star" aria-label="Bookmarked day">★</span>' : ""}
       <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
     `;
-    button.addEventListener("click", () => showDayView(key));
-    elements.calendarGrid.appendChild(button);
+    button.addEventListener("click", () => {
+      selectedDate = key;
+      renderCalendarView();
+    });
+    elements.calendarPageGrid.appendChild(button);
   });
+
+  renderCalendarSelectedRecords();
+}
+
+function renderCalendarSelectedRecords() {
+  const records = [...(state.records[selectedDate] || [])].sort((a, b) => a.time.localeCompare(b.time));
+  elements.calendarRecordCount.textContent = records.length;
+  elements.calendarDaySummary.innerHTML = renderSelectedDayTotalSummary(selectedDate);
+  elements.calendarEditorDate.value = selectedDate;
+  elements.calendarRecordList.innerHTML = "";
+
+  if (!records.length) {
+    elements.calendarRecordList.innerHTML = `<p class="empty-state">No records for this day yet.</p>`;
+    return;
+  }
+
+  records.forEach((record) => {
+    const item = createRecordListItem(record, selectedDate);
+    item.addEventListener("click", (event) => {
+      if (event.target.closest("button")) {
+        return;
+      }
+      startCalendarEditRecord(record);
+    });
+    elements.calendarRecordList.appendChild(item);
+  });
+}
+
+function toggleCalendarEditor() {
+  elements.calendarInlineEditor.hidden = !elements.calendarInlineEditor.hidden;
+  if (!elements.calendarInlineEditor.hidden) {
+    hydrateCalendarEditor();
+  }
+}
+
+function hydrateCalendarEditor() {
+  elements.calendarEditorDate.value = selectedDate;
+  elements.calendarEditorTime.value = elements.calendarEditorTime.value || new Date().toTimeString().slice(0, 5);
+  elements.calendarEditorStartTime.value = elements.calendarEditorStartTime.value || elements.calendarEditorTime.value;
+  document.querySelectorAll(".calendar-type-button").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.type === activeCalendarType);
+  });
+  updateCalendarAmountField();
+}
+
+function updateCalendarAmountField() {
+  const config = typeConfig[activeCalendarType];
+  elements.calendarAmountField.childNodes[0].nodeValue = `${config.amount} `;
+  elements.calendarEditorAmount.placeholder = config.placeholder;
+  syncCalendarDurationVisibility();
+}
+
+function syncCalendarDurationVisibility() {
+  const timed = timedRecordTypes.includes(activeCalendarType);
+  elements.calendarDurationFields.hidden = !timed;
+  if (timed && !elements.calendarEditorStartTime.value) {
+    elements.calendarEditorStartTime.value = elements.calendarEditorTime.value || new Date().toTimeString().slice(0, 5);
+  }
+}
+
+function syncCalendarDurationFromEnd() {
+  if (!timedRecordTypes.includes(activeCalendarType)) {
+    return;
+  }
+  const start = elements.calendarEditorStartTime.value || elements.calendarEditorTime.value;
+  const end = elements.calendarEditorEndTime.value;
+  if (start && end) {
+    elements.calendarEditorDuration.value = durationFromTimes(start, end);
+  }
+}
+
+function syncCalendarEndFromDuration() {
+  if (!timedRecordTypes.includes(activeCalendarType)) {
+    return;
+  }
+  const start = elements.calendarEditorStartTime.value || elements.calendarEditorTime.value;
+  const duration = Number(elements.calendarEditorDuration.value);
+  if (start && Number.isFinite(duration) && duration > 0) {
+    elements.calendarEditorEndTime.value = addMinutesToTime(start, duration);
+  }
+}
+
+function saveCalendarRecord() {
+  if (calendarEditingRecordId) {
+    updateCalendarEditedRecord();
+    return;
+  }
+
+  const record = buildCalendarRecordFromForm(createId());
+  state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
+  applyWeightRecordToProfile(record);
+  clearCalendarFormAfterSave();
+  persist();
+  renderCalendarView();
+  renderCategory();
+}
+
+function buildCalendarRecordFromForm(id) {
+  const record = {
+    id,
+    type: activeCalendarType,
+    time: elements.calendarEditorTime.value || elements.calendarEditorStartTime.value || new Date().toTimeString().slice(0, 5),
+    amount: elements.calendarEditorAmount.value.trim(),
+    note: elements.calendarEditorNote.value.trim(),
+  };
+
+  if (timedRecordTypes.includes(activeCalendarType)) {
+    const startTime = elements.calendarEditorStartTime.value || record.time;
+    const durationMinutes = Math.max(1, durationFromTimes(startTime, elements.calendarEditorEndTime.value) || Number(elements.calendarEditorDuration.value) || parseDurationMinutes(record.amount) || 1);
+    const endTime = elements.calendarEditorEndTime.value || addMinutesToTime(startTime, durationMinutes);
+    record.time = startTime;
+    record.startTime = startTime;
+    record.endTime = endTime;
+    record.durationMinutes = durationMinutes;
+    record.amount = `${durationMinutes} min`;
+  }
+
+  return record;
+}
+
+function startCalendarEditRecord(record) {
+  calendarEditingRecordId = record.id;
+  activeCalendarType = record.type;
+  elements.calendarInlineEditor.hidden = false;
+  elements.calendarEditorDate.value = selectedDate;
+  elements.calendarEditorTime.value = record.time;
+  elements.calendarEditorStartTime.value = record.startTime || record.time;
+  elements.calendarEditorEndTime.value = record.endTime || "";
+  elements.calendarEditorDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
+  elements.calendarEditorAmount.value = record.amount || "";
+  elements.calendarEditorNote.value = record.note || "";
+  document.querySelectorAll(".calendar-type-button").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.type === activeCalendarType);
+  });
+  updateCalendarAmountField();
+  elements.calendarSaveRecord.textContent = "Update";
+  elements.calendarCancelEdit.hidden = false;
+  elements.calendarEditorAmount.focus();
+}
+
+function updateCalendarEditedRecord() {
+  const records = state.records[selectedDate] || [];
+  const record = records.find((entry) => entry.id === calendarEditingRecordId);
+  if (!record) {
+    clearCalendarEditMode();
+    return;
+  }
+
+  Object.assign(record, buildCalendarRecordFromForm(record.id));
+  applyWeightRecordToProfile(record);
+  syncProfileWeightFromRecords();
+  persist();
+  clearCalendarEditMode();
+  renderCalendarView();
+  renderCategory();
+}
+
+function clearCalendarFormAfterSave() {
+  elements.calendarEditorAmount.value = "";
+  elements.calendarEditorNote.value = "";
+  elements.calendarEditorEndTime.value = "";
+  elements.calendarEditorDuration.value = "";
+  elements.calendarEditorStartTime.value = elements.calendarEditorTime.value || new Date().toTimeString().slice(0, 5);
+}
+
+function clearCalendarEditMode() {
+  calendarEditingRecordId = null;
+  clearCalendarFormAfterSave();
+  elements.calendarSaveRecord.textContent = "Save";
+  elements.calendarCancelEdit.hidden = true;
+  syncCalendarDurationVisibility();
+}
+
+function applyWeightRecordToProfile(record) {
+  if (record.type !== "weight") {
+    return;
+  }
+  const parsedWeight = parseWeight(record.amount);
+  if (Number.isFinite(parsedWeight)) {
+    state.profile.weightKg = parsedWeight;
+    hydrateMainProfile();
+    hydrateProfileForm();
+  }
+}
+
+function renderSelectedDayTotalSummary(dateKey) {
+  const records = state.records[dateKey] || [];
+  const durationFor = (type) => records.filter((record) => record.type === type).reduce((total, record) => total + getRecordDuration(record), 0);
+  const countFor = (type) => records.filter((record) => record.type === type).length;
+  const sleepMinutes = durationFor("sleep");
+  const playMinutes = durationFor("play");
+  const walkMinutes = durationFor("walk");
+  const trainMinutes = durationFor("train");
+  const boxMinutes = durationFor("box");
+  const peeCount = countFor("pee");
+  const poopCount = countFor("poop");
+  const foodGrams = sumAmount(records.filter((record) => record.type === "food"), "g");
+  const waterMl = sumAmount(records.filter((record) => record.type === "water"), "ml");
+
+  const noteText = buildSelectedDayNoteSummary(records);
+  const valueOrBlank = (value) => value || "";
+  const durationOrBlank = (minutes) => (minutes ? formatDuration(minutes) : "");
+  const parts = [
+    ["Sleep", durationOrBlank(sleepMinutes)],
+    ["Play", durationOrBlank(playMinutes)],
+    ["Walk", durationOrBlank(walkMinutes)],
+    ["Train", durationOrBlank(trainMinutes)],
+    ["Box", durationOrBlank(boxMinutes)],
+    ["Pee", peeCount ? `${peeCount} times (avg. interval: ${formatAverageInterval(records, "pee")})` : ""],
+    ["Poop", poopCount ? `${poopCount} times (avg. interval: ${formatAverageInterval(records, "poop")})` : ""],
+    ["Food", valueOrBlank(foodGrams ? `${foodGrams}g consumed` : "")],
+    ["Water", valueOrBlank(waterMl ? `${countFor("water")} times, ${waterMl}mL` : "")],
+    ["Notes", noteText],
+  ];
+
+  return parts
+    .map(
+      ([label, value]) => `
+        <article class="day-total-card">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function buildSelectedDayNoteSummary(records) {
+  const noteTypes = ["note", "shower", "tooth", "vaccine", "school"];
+  return records
+    .filter((record) => noteTypes.includes(record.type))
+    .map((record) => {
+      const label = typeConfig[record.type]?.label || record.type;
+      const detail = [record.amount, record.note].filter(Boolean).join(" - ");
+      return detail ? `${label}: ${detail}` : label;
+    })
+    .join("; ");
+}
+
+function renderBookmarksView() {
+  const years = getAvailableBookmarkYears();
+  if (!years.includes(selectedBookmarkYear)) {
+    selectedBookmarkYear = years[0] || today.getFullYear();
+  }
+  elements.bookmarkYearSelect.innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join("");
+  elements.bookmarkYearSelect.value = String(selectedBookmarkYear);
+  elements.bookmarkYearTitle.textContent = `Bookmarked Days in ${selectedBookmarkYear}`;
+
+  const bookmarkedDates = getBookmarkedDates().filter((dateKey) => Number(dateKey.slice(0, 4)) === selectedBookmarkYear);
+
+  elements.bookmarkCount.textContent = bookmarkedDates.length;
+  elements.bookmarkList.innerHTML = "";
+
+  if (!bookmarkedDates.length) {
+    elements.bookmarkList.innerHTML = `<p class="empty-state">No bookmarked days in ${selectedBookmarkYear}.</p>`;
+    return;
+  }
+
+  bookmarkedDates.forEach((dateKey) => {
+    const records = state.records[dateKey] || [];
+    const item = document.createElement("article");
+    item.className = "bookmark-item";
+    item.innerHTML = `
+      <button class="bookmark-main" type="button">
+        <span class="bookmark-star" aria-hidden="true">★</span>
+        <span>
+          <strong>${escapeHtml(formatDateKey(dateKey))}</strong>
+          <small>${records.length} records</small>
+        </span>
+      </button>
+      <button class="quiet-button bookmark-edit" type="button">Edit</button>
+    `;
+    item.querySelector(".bookmark-main").addEventListener("click", () => showCalendarView(dateKey));
+    item.querySelector(".bookmark-edit").addEventListener("click", () => showDayView(dateKey));
+    elements.bookmarkList.appendChild(item);
+  });
+}
+
+function renderHomeBookmarkSummary() {
+  const monthLabel = homeBookmarkMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
+  const bookmarkedDates = getBookmarkedDates().filter((dateKey) => {
+    const date = parseDateKey(dateKey);
+    return date && date.getFullYear() === homeBookmarkMonth.getFullYear() && date.getMonth() === homeBookmarkMonth.getMonth();
+  });
+  elements.homeBookmarkTitle.textContent = `Bookmarked Days in ${monthLabel}`;
+  elements.homeBookmarkCount.textContent = bookmarkedDates.length;
+  elements.homeBookmarkSummary.innerHTML = "";
+
+  if (!bookmarkedDates.length) {
+    elements.homeBookmarkSummary.innerHTML = `<p class="empty-state">No bookmarked days in ${escapeHtml(monthLabel)}.</p>`;
+    return;
+  }
+
+  bookmarkedDates.forEach((dateKey) => {
+    const records = state.records[dateKey] || [];
+    const item = document.createElement("button");
+    item.className = "home-bookmark-item";
+    item.type = "button";
+    item.innerHTML = `
+      <span aria-hidden="true">★</span>
+      <strong>${escapeHtml(formatDateKey(dateKey))}</strong>
+      <small>${records.length} records</small>
+    `;
+    item.addEventListener("click", () => showCalendarView(dateKey));
+    elements.homeBookmarkSummary.appendChild(item);
+  });
+}
+
+function renderHomeMonthlyAverage() {
+  const monthLabel = today.toLocaleDateString("en", { month: "long", year: "numeric" });
+  const start = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
+  const end = toKey(today);
+  const stats = calculateStatsForRange(maxDateKey(start, analyticsStartKey), end);
+  elements.homeMonthlyAverageTitle.textContent = `Monthly Average in ${monthLabel}`;
+  elements.homeMonthlyAverage.innerHTML = `
+    <article><span>Pee</span><strong>${escapeHtml(stats.peeText)}</strong></article>
+    <article><span>Poop</span><strong>${escapeHtml(stats.poopText)}</strong></article>
+    <article><span>Pee Interval</span><strong>${escapeHtml(stats.peeInterval)}</strong></article>
+    <article><span>Poop Interval</span><strong>${escapeHtml(stats.poopInterval)}</strong></article>
+    <article><span>Sleep</span><strong>${escapeHtml(stats.sleepPerDay)}/day</strong></article>
+    <article><span>Walk</span><strong>${escapeHtml(stats.walkPerDay)}/day</strong></article>
+    <article><span>Box</span><strong>${escapeHtml(stats.boxPerDay)}/day</strong></article>
+    <article><span>Weight</span><strong>${escapeHtml(stats.weightText)}</strong></article>
+  `;
+}
+
+function getBookmarkedDates() {
+  return Object.entries(state.bookmarks || {})
+    .filter(([, value]) => value?.bookmarked)
+    .map(([date]) => date)
+    .sort((a, b) => b.localeCompare(a));
+}
+
+function getAvailableBookmarkYears() {
+  const years = new Set([today.getFullYear()]);
+  getBookmarkedDates().forEach((dateKey) => {
+    const year = Number(dateKey.slice(0, 4));
+    if (year) {
+      years.add(year);
+    }
+  });
+  return Array.from(years).sort((a, b) => b - a);
+}
+
+function createRecordListItem(record, dateKey) {
+  const config = typeConfig[record.type] || typeConfig.note;
+  const item = document.createElement("article");
+  item.className = "record-item";
+  item.innerHTML = `
+    <span class="record-icon" style="background:${config.color}">${config.icon}</span>
+    <div>
+      <p class="record-title">${config.label} - ${escapeHtml(formatTime(record.time))}</p>
+      <p class="record-meta">${escapeHtml([record.amount, record.note].filter(Boolean).join(" - "))}</p>
+    </div>
+    <button class="delete-button" type="button" aria-label="Delete record">x</button>
+  `;
+  item.querySelector("button").addEventListener("click", () => {
+    deleteRecord(dateKey, record.id);
+  });
+  return item;
 }
 
 function renderBookmarkButton() {
@@ -435,7 +956,13 @@ function toggleSelectedDateBookmark() {
   };
   persist();
   renderBookmarkButton();
-  renderCalendar();
+  if (currentView === "calendar") {
+    renderCalendarView();
+  }
+  if (currentView === "bookmarks") {
+    renderBookmarksView();
+  }
+  renderHomeBookmarkSummary();
 }
 
 function isDateBookmarked(dateKey) {
@@ -453,20 +980,7 @@ function renderRecords() {
   }
 
   records.forEach((record) => {
-    const config = typeConfig[record.type];
-    const item = document.createElement("article");
-    item.className = "record-item";
-    item.innerHTML = `
-      <span class="record-icon" style="background:${config.color}">${config.icon}</span>
-      <div>
-        <p class="record-title">${config.label} - ${escapeHtml(formatTime(record.time))}</p>
-        <p class="record-meta">${escapeHtml([record.amount, record.note].filter(Boolean).join(" - "))}</p>
-      </div>
-      <button class="delete-button" type="button" aria-label="Delete record">x</button>
-    `;
-    item.querySelector("button").addEventListener("click", () => {
-      deleteRecord(selectedDate, record.id);
-    });
+    const item = createRecordListItem(record, selectedDate);
     item.addEventListener("click", (event) => {
       if (event.target.closest("button")) {
         return;
@@ -489,8 +1003,13 @@ function deleteRecord(dateKey, recordId) {
   syncProfileWeightFromRecords();
   persist();
   renderDayView();
+  if (currentView === "calendar") {
+    renderCalendarView();
+  }
+  if (currentView === "bookmarks") {
+    renderBookmarksView();
+  }
   renderCategory();
-  renderCalendar();
 }
 
 function renderAge() {
@@ -1325,6 +1844,7 @@ function getLatestPhoto() {
 function hydrateMainProfile() {
   elements.puppyName.value = state.profile.name;
   elements.adultWeight.value = state.profile.weightKg;
+  elements.currentMonth.textContent = formatLongDate(today);
 }
 
 function hydrateProfileForm() {
@@ -2037,7 +2557,16 @@ function mergeSyncedPayload(payload) {
 function refreshCurrentView() {
   if (currentView === "day") {
     renderDayView();
-    renderCalendar();
+    renderCategory();
+    return;
+  }
+  if (currentView === "calendar") {
+    renderCalendarView();
+    renderCategory();
+    return;
+  }
+  if (currentView === "bookmarks") {
+    renderBookmarksView();
     renderCategory();
     return;
   }
@@ -2660,6 +3189,14 @@ function formatDateKey(key) {
   const date = parseDateKey(key);
   return date.toLocaleDateString("en", {
     month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatLongDate(date) {
+  return date.toLocaleDateString("en", {
+    month: "long",
     day: "numeric",
     year: "numeric",
   });

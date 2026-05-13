@@ -62,7 +62,6 @@ button {
   overflow-x: hidden;
 }
 
-.top-bar,
 .day-heading,
 .section-title {
   display: flex;
@@ -71,13 +70,32 @@ button {
   gap: 12px;
 }
 
+.top-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px;
+  align-items: center;
+  gap: 8px;
+  min-height: 54px;
+}
+
 .day-title {
-  flex: 1;
+  min-width: 0;
+}
+
+.day-title h1,
+.top-bar h1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .top-actions {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(4, 32px);
+  gap: 5px;
+  justify-content: flex-end;
+  width: 148px;
+  min-height: 32px;
 }
 
 .compact-select {
@@ -129,12 +147,34 @@ h2 {
   font-weight: 800;
 }
 
+.top-actions .icon-button {
+  width: 32px;
+  height: 32px;
+  font-size: 0.9rem;
+}
+
+.home-button {
+  overflow: hidden;
+  background: #e8dfcf;
+}
+
+.home-button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nav-button.active {
+  outline: 2px solid rgba(97, 120, 97, 0.45);
+  outline-offset: 2px;
+}
+
 .puppy-panel {
   display: grid;
   grid-template-columns: 104px 1fr;
   gap: 14px;
   align-items: center;
-  margin: 18px 0 12px;
+  margin: 14px 0 12px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -282,7 +322,6 @@ select:focus {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-bottom: 8px;
 }
 
 .month-controls button {
@@ -294,10 +333,19 @@ select:focus {
 }
 
 .calendar-card {
+  margin-top: 14px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--paper);
+}
+
+.calendar-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .weekday-row,
@@ -383,7 +431,9 @@ select:focus {
 .day-panel,
 .category-panel,
 .info-panel,
-.quick-log-panel {
+.quick-log-panel,
+.bookmark-summary-panel,
+.monthly-average-panel {
   margin-top: 14px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -543,6 +593,46 @@ select:focus {
   color: var(--leaf-dark);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.day-total-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.day-total-card {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.day-total-card span,
+.day-total-card strong {
+  display: block;
+}
+
+.day-total-card span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.day-total-card strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.summary-empty {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .duration-panel {
@@ -715,6 +805,166 @@ select:focus {
   color: #fffdf8;
 }
 
+.wide-button {
+  width: 100%;
+  margin: 10px 0 12px;
+}
+
+.compact-record-list {
+  margin-top: 0;
+}
+
+.bookmark-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.bookmark-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.bookmark-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ink);
+  text-align: left;
+}
+
+.bookmark-main strong,
+.bookmark-main small {
+  display: block;
+}
+
+.bookmark-main small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.bookmark-star {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #fff6dc;
+  color: #c58a1f;
+  font-size: 0.9rem;
+}
+
+.bookmark-edit {
+  min-width: 54px;
+  padding: 0 10px;
+}
+
+.home-bookmark-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.home-monthly-average {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.home-monthly-average article {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.home-monthly-average span,
+.home-monthly-average strong {
+  display: block;
+}
+
+.home-monthly-average span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.home-monthly-average strong {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.bookmark-month-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bookmark-month-controls button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e8dfcf;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.home-bookmark-item,
+.home-bookmark-more {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+}
+
+.home-bookmark-item span {
+  color: #c58a1f;
+  font-size: 0.86rem;
+}
+
+.home-bookmark-item strong {
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.home-bookmark-item small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.home-bookmark-more {
+  display: block;
+  background: #eee6d9;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .small-photo-button {
   display: grid;
   place-items: center;
@@ -768,7 +1018,8 @@ select:focus {
   gap: 7px;
 }
 
-.type-button {
+.type-button,
+.calendar-type-button {
   min-height: 36px;
   height: auto;
   padding: 7px 8px;
@@ -781,7 +1032,8 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
-.type-button.selected {
+.type-button.selected,
+.calendar-type-button.selected {
   background: var(--ink);
   color: #fffdf8;
 }
@@ -880,6 +1132,26 @@ select:focus {
 @media (max-width: 360px) {
   .phone-shell {
     padding: 0;
+  }
+
+  .top-bar {
+    grid-template-columns: minmax(0, 1fr) 125px;
+    gap: 6px;
+  }
+
+  .top-actions {
+    grid-template-columns: repeat(4, 28px);
+    gap: 4px;
+    width: 125px;
+  }
+
+  .top-actions .icon-button {
+    width: 28px;
+    height: 28px;
+  }
+
+  .top-actions .icon-button {
+    font-size: 0.78rem;
   }
 
   .app-screen {

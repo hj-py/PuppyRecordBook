@@ -21,15 +21,21 @@
       <section class="app-screen">
         <div id="mainView" class="view">
           <header class="top-bar">
-            <div>
+            <div class="day-title">
               <p class="eyebrow">Puppy Record Book</p>
-              <h1 id="currentMonth">Calendar</h1>
+              <h1 id="currentMonth">Leo</h1>
             </div>
             <div class="top-actions">
-              <button class="icon-button" id="statusButton" type="button" aria-label="Open status dashboard" title="Status">
+              <button class="icon-button nav-button" id="statusButton" type="button" data-view="status" aria-label="Open status dashboard" title="Status">
                 <span aria-hidden="true">#</span>
               </button>
-              <button class="icon-button" id="profileButton" type="button" aria-label="Open settings" title="Settings">
+              <button class="icon-button nav-button" id="calendarPageButton" type="button" data-view="calendar" aria-label="Open calendar records" title="Calendar records">
+                <span aria-hidden="true">&#128197;</span>
+              </button>
+              <button class="icon-button nav-button" id="bookmarksButton" type="button" data-view="bookmarks" aria-label="Open bookmarked days" title="Bookmarks">
+                <span aria-hidden="true">&#9733;</span>
+              </button>
+              <button class="icon-button nav-button" id="profileButton" type="button" data-view="profile" aria-label="Open settings" title="Settings">
                 <span aria-hidden="true">&#9881;</span>
               </button>
             </div>
@@ -78,18 +84,6 @@
             <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk, play, sleep, train, and box use start/stop.</p>
           </section>
 
-          <nav class="month-controls" aria-label="Calendar navigation">
-            <button id="previousMonth" type="button" aria-label="Previous month" title="Previous month">&lt;</button>
-            <button id="nextMonth" type="button" aria-label="Next month" title="Next month">&gt;</button>
-          </nav>
-
-          <section class="calendar-card" aria-label="Calendar">
-            <div class="weekday-row" aria-hidden="true">
-              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
-            </div>
-            <div id="calendarGrid" class="calendar-grid"></div>
-          </section>
-
           <section class="category-panel" aria-label="Category records">
             <div class="section-title">
               <h2 id="categoryTitle">Walk Records</h2>
@@ -109,16 +103,41 @@
             <div id="categorySummary" class="category-summary"></div>
             <div id="categoryList" class="category-list"></div>
           </section>
+
+          <section class="monthly-average-panel" aria-label="Monthly average summary">
+            <div class="section-title">
+              <h2 id="homeMonthlyAverageTitle">Monthly Average</h2>
+            </div>
+            <div id="homeMonthlyAverage" class="home-monthly-average"></div>
+          </section>
+
+          <section class="bookmark-summary-panel" aria-label="Bookmarked days summary">
+            <div class="section-title">
+              <h2 id="homeBookmarkTitle">Bookmarked Days</h2>
+              <div class="bookmark-month-controls">
+                <button id="homeBookmarkPreviousMonth" type="button" aria-label="Previous bookmark month" title="Previous month">&lt;</button>
+                <span id="homeBookmarkCount">0</span>
+                <button id="homeBookmarkNextMonth" type="button" aria-label="Next bookmark month" title="Next month">&gt;</button>
+              </div>
+            </div>
+            <div id="homeBookmarkSummary" class="home-bookmark-summary"></div>
+          </section>
         </div>
 
         <div id="dayView" class="view" hidden>
           <header class="top-bar">
-            <button class="icon-button" id="backToMain" type="button" aria-label="Back to main page" title="Back">
-              <span aria-hidden="true">&lt;</span>
-            </button>
             <div class="day-title">
               <p class="eyebrow">Daily record</p>
               <h1 id="selectedDateLabel"></h1>
+            </div>
+            <div class="top-actions">
+              <button class="icon-button nav-button home-button" type="button" data-view="main" aria-label="Open Leo home" title="Leo">
+                <img src="./apple-touch-icon-v34.png" alt="" />
+              </button>
+              <button class="icon-button nav-button" type="button" data-view="status" aria-label="Open status dashboard" title="Status"><span aria-hidden="true">#</span></button>
+              <button class="icon-button nav-button" type="button" data-view="calendar" aria-label="Open calendar records" title="Calendar records"><span aria-hidden="true">&#128197;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="bookmarks" aria-label="Open bookmarked days" title="Bookmarks"><span aria-hidden="true">&#9733;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="profile" aria-label="Open settings" title="Settings"><span aria-hidden="true">&#9881;</span></button>
             </div>
           </header>
 
@@ -194,18 +213,145 @@
 
         </div>
 
+        <div id="calendarView" class="view" hidden>
+          <header class="top-bar">
+            <div class="day-title">
+              <p class="eyebrow">Calendar</p>
+              <h1 id="calendarPageTitle">Daily Records</h1>
+            </div>
+            <div class="top-actions">
+              <button class="icon-button nav-button home-button" type="button" data-view="main" aria-label="Open Leo home" title="Leo">
+                <img src="./apple-touch-icon-v34.png" alt="" />
+              </button>
+              <button class="icon-button nav-button" type="button" data-view="status" aria-label="Open status dashboard" title="Status"><span aria-hidden="true">#</span></button>
+              <button class="icon-button nav-button" id="calendarToBookmarks" type="button" data-view="bookmarks" aria-label="Open bookmarks" title="Bookmarks"><span aria-hidden="true">&#9733;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="profile" aria-label="Open settings" title="Settings"><span aria-hidden="true">&#9881;</span></button>
+            </div>
+          </header>
+
+          <section class="calendar-card" aria-label="Calendar page">
+            <div class="calendar-card-title">
+              <h2>Month</h2>
+              <nav class="month-controls" aria-label="Calendar page navigation">
+                <button id="calendarPagePreviousMonth" type="button" aria-label="Previous month" title="Previous month">&lt;</button>
+                <button id="calendarPageNextMonth" type="button" aria-label="Next month" title="Next month">&gt;</button>
+              </nav>
+            </div>
+            <div class="weekday-row" aria-hidden="true">
+              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+            </div>
+            <div id="calendarPageGrid" class="calendar-grid"></div>
+          </section>
+
+          <section class="day-panel" aria-label="Calendar selected day records">
+            <div class="section-title">
+              <h2 id="calendarSelectedDateLabel">Records</h2>
+              <span id="calendarRecordCount">0</span>
+            </div>
+            <div id="calendarDaySummary" class="day-total-summary"></div>
+            <button id="openSelectedDayEditor" class="primary-button wide-button" type="button">Add or edit data</button>
+            <div id="calendarInlineEditor" class="quick-form calendar-inline-editor" hidden>
+              <label>
+                Date
+                <input id="calendarEditorDate" type="date" />
+              </label>
+              <div class="type-grid" role="radiogroup" aria-label="Calendar record type">
+                <button type="button" class="calendar-type-button selected" data-type="walk">Walk</button>
+                <button type="button" class="calendar-type-button" data-type="food">Food</button>
+                <button type="button" class="calendar-type-button" data-type="water">Water</button>
+                <button type="button" class="calendar-type-button" data-type="poop">Poop</button>
+                <button type="button" class="calendar-type-button" data-type="pee">Pee</button>
+                <button type="button" class="calendar-type-button" data-type="weight">Weight</button>
+                <button type="button" class="calendar-type-button" data-type="vaccine">Vaccine</button>
+                <button type="button" class="calendar-type-button" data-type="play">Play</button>
+                <button type="button" class="calendar-type-button" data-type="sleep">Sleep</button>
+                <button type="button" class="calendar-type-button" data-type="train">Train</button>
+                <button type="button" class="calendar-type-button" data-type="box">Box</button>
+                <button type="button" class="calendar-type-button" data-type="shower">Shower</button>
+                <button type="button" class="calendar-type-button" data-type="tooth">Brush teeth</button>
+                <button type="button" class="calendar-type-button" data-type="note">Note</button>
+                <button type="button" class="calendar-type-button" data-type="school">Hundeschule</button>
+              </div>
+              <div class="form-row">
+                <label>
+                  Time
+                  <input id="calendarEditorTime" type="time" />
+                </label>
+                <label id="calendarAmountField">
+                  Amount
+                  <input id="calendarEditorAmount" placeholder="e.g. 120g" />
+                </label>
+              </div>
+              <div id="calendarDurationFields" class="duration-panel" hidden>
+                <label>
+                  Start
+                  <input id="calendarEditorStartTime" type="time" />
+                </label>
+                <label>
+                  End
+                  <input id="calendarEditorEndTime" type="time" />
+                </label>
+                <label>
+                  Duration min
+                  <input id="calendarEditorDuration" type="number" min="1" step="1" inputmode="numeric" />
+                </label>
+              </div>
+              <label>
+                Place or note
+                <input id="calendarEditorNote" placeholder="Park, chicken kibble, rabies vaccine..." />
+              </label>
+              <div class="form-actions">
+                <button id="calendarCancelEdit" class="quiet-button" type="button" hidden>Cancel edit</button>
+                <button id="calendarSaveRecord" class="primary-button" type="button">Save</button>
+              </div>
+            </div>
+            <div id="calendarRecordList" class="record-list compact-record-list"></div>
+          </section>
+        </div>
+
+        <div id="bookmarksView" class="view" hidden>
+          <header class="top-bar">
+            <div class="day-title">
+              <p class="eyebrow">Bookmarks</p>
+              <h1>Starred Days</h1>
+            </div>
+            <div class="top-actions">
+              <button class="icon-button nav-button home-button" type="button" data-view="main" aria-label="Open Leo home" title="Leo">
+                <img src="./apple-touch-icon-v34.png" alt="" />
+              </button>
+              <button class="icon-button nav-button" type="button" data-view="status" aria-label="Open status dashboard" title="Status"><span aria-hidden="true">#</span></button>
+              <button class="icon-button nav-button" id="bookmarksToCalendar" type="button" data-view="calendar" aria-label="Open calendar records" title="Calendar records"><span aria-hidden="true">&#128197;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="profile" aria-label="Open settings" title="Settings"><span aria-hidden="true">&#9881;</span></button>
+            </div>
+          </header>
+
+          <section class="day-panel" aria-label="Bookmarked day records">
+            <div class="section-title">
+              <h2 id="bookmarkYearTitle">Bookmarked days</h2>
+              <label class="compact-select">
+                Year
+                <select id="bookmarkYearSelect"></select>
+              </label>
+              <span id="bookmarkCount">0</span>
+            </div>
+            <div id="bookmarkList" class="bookmark-list"></div>
+          </section>
+        </div>
+
         <div id="statusView" class="view" hidden>
           <header class="top-bar">
-            <button class="icon-button" id="backFromStatus" type="button" aria-label="Back to main page" title="Back">
-              <span aria-hidden="true">&lt;</span>
-            </button>
             <div class="day-title">
               <p class="eyebrow">Status</p>
               <h1>Overview</h1>
             </div>
-            <button class="icon-button" id="statusSettingsButton" type="button" aria-label="Open settings" title="Settings">
-              <span aria-hidden="true">&#9881;</span>
-            </button>
+            <div class="top-actions">
+              <button class="icon-button nav-button home-button" type="button" data-view="main" aria-label="Open Leo home" title="Leo">
+                <img src="./apple-touch-icon-v34.png" alt="" />
+              </button>
+              <button class="icon-button nav-button" type="button" data-view="calendar" aria-label="Open calendar records" title="Calendar records"><span aria-hidden="true">&#128197;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="bookmarks" aria-label="Open bookmarked days" title="Bookmarks"><span aria-hidden="true">&#9733;</span></button>
+              <button class="icon-button nav-button" id="statusSettingsButton" type="button" data-view="profile" aria-label="Open settings" title="Settings"><span aria-hidden="true">&#9881;</span></button>
+            </div>
           </header>
 
           <section class="status-panel" aria-label="Annual puppy status">
@@ -229,12 +375,17 @@
 
         <div id="profileView" class="view" hidden>
           <header class="top-bar">
-            <button class="icon-button" id="backFromProfile" type="button" aria-label="Back to main page" title="Back">
-              <span aria-hidden="true">&lt;</span>
-            </button>
             <div class="day-title">
               <p class="eyebrow">Default information</p>
               <h1>Profile</h1>
+            </div>
+            <div class="top-actions">
+              <button class="icon-button nav-button home-button" type="button" data-view="main" aria-label="Open Leo home" title="Leo">
+                <img src="./apple-touch-icon-v34.png" alt="" />
+              </button>
+              <button class="icon-button nav-button" type="button" data-view="status" aria-label="Open status dashboard" title="Status"><span aria-hidden="true">#</span></button>
+              <button class="icon-button nav-button" type="button" data-view="calendar" aria-label="Open calendar records" title="Calendar records"><span aria-hidden="true">&#128197;</span></button>
+              <button class="icon-button nav-button" type="button" data-view="bookmarks" aria-label="Open bookmarked days" title="Bookmarks"><span aria-hidden="true">&#9733;</span></button>
             </div>
           </header>
 
