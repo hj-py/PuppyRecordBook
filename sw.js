@@ -1,5 +1,5 @@
-const cacheName = "puppy-record-book-v31";
-const appShell = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg"];
+const cacheName = "puppy-record-book-v35";
+const appShell = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg", "./apple-touch-icon-v34.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(appShell)));
