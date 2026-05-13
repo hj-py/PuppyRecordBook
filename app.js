@@ -20,7 +20,7 @@ const timedQuickTypes = ["walk", "play", "sleep", "train", "box"];
 const timedRecordTypes = ["walk", "play", "sleep", "train", "box"];
 const analyticsStartKey = "2026-05-09";
 const defaultPhoto =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='78' r='46' fill='%23b98b68'/%3E%3Ccircle cx='48' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='112' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='64' cy='74' r='6' fill='%2325231f'/%3E%3Ccircle cx='96' cy='74' r='6' fill='%2325231f'/%3E%3Cellipse cx='80' cy='90' rx='10' ry='7' fill='%2325231f'/%3E%3Cpath d='M66 105c10 9 20 9 29 0' fill='none' stroke='%2325231f' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='84' r='50' fill='%23fffdf8'/%3E%3Cpath d='M43 58c-15 7-25 21-23 36 1 12 9 20 19 20 12 0 19-11 18-24-1-10-6-22-14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M117 58c15 7 25 21 23 36-1 12-9 20-19 20-12 0-19-11-18-24 1-10 6-22 14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M44 70c9-26 64-26 73 0 7 19-1 50-37 50S37 89 44 70Z' fill='%23fff8e9'/%3E%3Cpath d='M55 63c9-14 43-18 52 0-13-7-39-7-52 0Z' fill='%23f6edda'/%3E%3Ccircle cx='64' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='96' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='66' cy='78' r='2' fill='%23fffdf8'/%3E%3Ccircle cx='98' cy='78' r='2' fill='%23fffdf8'/%3E%3Cellipse cx='80' cy='95' rx='11' ry='8' fill='%232d2923'/%3E%3Cpath d='M71 108c7 7 17 7 25 0' fill='none' stroke='%232d2923' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
 const today = new Date();
 const state = loadState();
@@ -496,12 +496,13 @@ function renderInsight() {
 
 function renderQuickLogButtons() {
   document.querySelectorAll(".quick-log-button").forEach((button) => {
-    button.classList.toggle("active", Boolean(state.activeSessions[button.dataset.action]));
+    const session = getActiveSession(button.dataset.action);
+    button.classList.toggle("active", Boolean(session));
     if (timedQuickTypes.includes(button.dataset.action)) {
-      button.textContent = state.activeSessions[button.dataset.action] ? `Stop ${typeConfig[button.dataset.action].label}` : typeConfig[button.dataset.action].label;
+      button.textContent = session ? `Stop ${typeConfig[button.dataset.action].label}` : typeConfig[button.dataset.action].label;
     }
   });
-  elements.activeSessionCount.textContent = Object.keys(state.activeSessions).length;
+  elements.activeSessionCount.textContent = Object.values(state.activeSessions || {}).filter(Boolean).length;
 }
 
 function handleQuickLog(type) {
@@ -544,23 +545,28 @@ function addQuickRecord(type, amount, note, time = new Date()) {
 
 function toggleTimedQuickLog(type) {
   const now = new Date();
-  const existing = state.activeSessions[type];
+  const existing = getActiveSession(type);
   if (!existing) {
-    state.activeSessions[type] = now.toISOString();
+    state.activeSessions[type] = { id: createId(), type, start: now.toISOString(), updatedAt: now.toISOString() };
     persist();
     renderQuickLogButtons();
     elements.quickLogStatus.textContent = `${typeConfig[type].label} started at ${formatTime(now.toTimeString().slice(0, 5))}.`;
     return;
   }
 
-  const start = new Date(existing);
+  const start = new Date(existing.start);
   const minutes = Math.max(1, Math.round((now - start) / 60000));
   const amount = `${minutes} min`;
   const note = `${formatTime(start.toTimeString().slice(0, 5))} - ${formatTime(now.toTimeString().slice(0, 5))}`;
+  state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), existing.id]));
   delete state.activeSessions[type];
   renderQuickLogButtons();
   addQuickRecord(type, amount, note, start);
   elements.quickLogStatus.textContent = `${typeConfig[type].label} ended. ${amount} saved.`;
+}
+
+function getActiveSession(type) {
+  return normalizeActiveSession(type, state.activeSessions?.[type]);
 }
 
 function recordFoodNow() {
@@ -1511,7 +1517,8 @@ function getSyncPayload() {
   const syncState = {
     ...state,
     photos: [],
-    activeSessions: {},
+    activeSessions: normalizeActiveSessions(state.activeSessions),
+    stoppedSessionIds: state.stoppedSessionIds || [],
     sync: {
       code: state.sync.code,
       lastSync: state.sync.lastSync,
@@ -1533,9 +1540,13 @@ function applySyncedPayload(payload) {
   const localPhotos = state.photos;
   const localSync = state.sync;
   const localDeletedRecordIds = state.deletedRecordIds || [];
+  const localActiveSessions = normalizeActiveSessions(state.activeSessions);
+  const localStoppedSessionIds = state.stoppedSessionIds || [];
   const nextState = migrateState(payload.data || payload);
   nextState.deletedRecordIds = Array.from(new Set([...(nextState.deletedRecordIds || []), ...localDeletedRecordIds]));
+  nextState.stoppedSessionIds = Array.from(new Set([...(nextState.stoppedSessionIds || []), ...localStoppedSessionIds]));
   nextState.records = mergeRecords(nextState.records || {}, {}, nextState.deletedRecordIds);
+  nextState.activeSessions = mergeActiveSessions(localActiveSessions, nextState.activeSessions || {}, nextState.stoppedSessionIds);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, nextState);
   state.photos = localPhotos;
@@ -1707,14 +1718,12 @@ function hasFirebaseSettings() {
 
 function mergeSyncedPayload(payload) {
   const localPhotos = state.photos;
-  const localActiveSessions = state.activeSessions;
   const local = makeJsonSafe(state);
   const remote = migrateState(payload?.data || payload || {});
   const merged = mergeStates(local, remote);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, merged);
   state.photos = localPhotos;
-  state.activeSessions = localActiveSessions;
   persist({ skipAutoSync: true });
   hydrateMainProfile();
   hydrateProfileForm();
@@ -1744,6 +1753,7 @@ function refreshCurrentView() {
 function mergeStates(local, remote) {
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
   const deletedRecordIds = Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
+  const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
   merged.owner = { ...remote.owner, ...local.owner };
   merged.profile = { ...remote.profile, ...local.profile };
   merged.school = { ...remote.school, ...local.school };
@@ -1758,8 +1768,47 @@ function mergeStates(local, remote) {
   merged.vaccination = { ...remote.vaccination, ...local.vaccination };
   merged.sync = { ...remote.sync, ...local.sync };
   merged.deletedRecordIds = deletedRecordIds;
+  merged.stoppedSessionIds = stoppedSessionIds;
   merged.records = mergeRecords(local.records || {}, remote.records || {}, deletedRecordIds);
-  merged.activeSessions = local.activeSessions || {};
+  merged.activeSessions = mergeActiveSessions(local.activeSessions || {}, remote.activeSessions || {}, stoppedSessionIds);
+  return merged;
+}
+
+function normalizeActiveSession(type, value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return { id: `${type}-${value}`, type, start: value, updatedAt: value };
+  }
+  return {
+    id: value.id || `${type}-${value.start || value.updatedAt || Date.now()}`,
+    type: value.type || type,
+    start: value.start || value.startedAt || value.updatedAt,
+    updatedAt: value.updatedAt || value.start || value.startedAt || new Date().toISOString(),
+  };
+}
+
+function normalizeActiveSessions(activeSessions = {}) {
+  return Object.fromEntries(
+    Object.entries(activeSessions)
+      .map(([type, value]) => [type, normalizeActiveSession(type, value)])
+      .filter(([, value]) => value?.start)
+  );
+}
+
+function mergeActiveSessions(localSessions = {}, remoteSessions = {}, stoppedSessionIds = []) {
+  const stopped = new Set(stoppedSessionIds);
+  const merged = {};
+  [...Object.entries(normalizeActiveSessions(remoteSessions)), ...Object.entries(normalizeActiveSessions(localSessions))].forEach(([type, session]) => {
+    if (!session || stopped.has(session.id)) {
+      return;
+    }
+    const existing = merged[type];
+    if (!existing || new Date(session.updatedAt) >= new Date(existing.updatedAt)) {
+      merged[type] = session;
+    }
+  });
   return merged;
 }
 
@@ -2043,6 +2092,7 @@ function loadState() {
     foodSettings: { type: "Puppy food", amounts: { morning: "110g", afternoon: "", evening: "120g" } },
     sync: { code: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
+    stoppedSessionIds: [],
     deletedRecordIds: [],
     vaccination: { rabiesDate: "", rabiesValidUntil: "" },
     settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
@@ -2120,7 +2170,8 @@ function migrateState(value) {
       firebaseConfig: value.sync?.firebaseConfig || "",
       lastSync: value.sync?.lastSync || "",
     },
-    activeSessions: value.activeSessions || {},
+    activeSessions: normalizeActiveSessions(value.activeSessions || {}),
+    stoppedSessionIds: Array.isArray(value.stoppedSessionIds) ? value.stoppedSessionIds : [],
     deletedRecordIds: Array.isArray(value.deletedRecordIds) ? value.deletedRecordIds : [],
     vaccination: {
       rabiesDate: value.vaccination?.rabiesDate || "",
