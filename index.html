@@ -104,8 +104,7 @@
               <button type="button" class="category-tab" data-category="weight">Weight</button>
               <button type="button" class="category-tab" data-category="sleep">Sleep</button>
               <button type="button" class="category-tab" data-category="box">Box</button>
-              <button type="button" class="category-tab" data-category="vaccine">Vaccine</button>
-              <button type="button" class="category-tab" data-category="school">School</button>
+              <button type="button" class="category-tab" data-category="note">Notes</button>
             </div>
             <div id="categorySummary" class="category-summary"></div>
             <div id="categoryList" class="category-list"></div>
@@ -126,6 +125,7 @@
           <section class="day-panel" aria-label="Add day records">
             <div class="section-title">
               <h2>Add data</h2>
+              <button id="bookmarkDay" class="quiet-button bookmark-button" type="button" aria-pressed="false">Star</button>
             </div>
             <div class="quick-form" id="quickForm">
               <label>
@@ -144,6 +144,9 @@
                 <button type="button" class="type-button" data-type="sleep">Sleep</button>
                 <button type="button" class="type-button" data-type="train">Train</button>
                 <button type="button" class="type-button" data-type="box">Box</button>
+                <button type="button" class="type-button" data-type="shower">Shower</button>
+                <button type="button" class="type-button" data-type="tooth">Brush teeth</button>
+                <button type="button" class="type-button" data-type="note">Note</button>
                 <button type="button" class="type-button" data-type="school">Hundeschule</button>
               </div>
               <div class="form-row">
@@ -382,9 +385,9 @@
             <div class="sync-actions">
               <button id="pushFirebaseButton" class="primary-button" type="button">Push Firebase</button>
               <button id="pullFirebaseButton" class="quiet-button" type="button">Pull Firebase</button>
-              <button id="exportExcelButton" class="quiet-button" type="button">Excel</button>
+              <button id="exportExcelButton" class="quiet-button" type="button">Export Excel</button>
               <label class="small-photo-button" for="importDataInput">Import Excel</label>
-              <input id="importDataInput" type="file" accept=".csv,text/csv" />
+              <input id="importDataInput" type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
             </div>
             <p id="syncStatus" class="legal-note">Use the same sync code and Firebase config on each phone. Auto-sync runs after edits.</p>
           </section>
@@ -413,6 +416,7 @@
       </section>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

@@ -343,9 +343,26 @@ select:focus {
   color: #fffdf8;
 }
 
+.day-cell.bookmarked:not(.selected) {
+  background: #fff6dc;
+}
+
 .day-number {
   font-size: 0.82rem;
   font-weight: 800;
+}
+
+.day-star {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  color: #c58a1f;
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.day-cell.selected .day-star {
+  color: #fff6dc;
 }
 
 .dot-row {
@@ -687,6 +704,15 @@ select:focus {
 .quiet-button {
   background: #e8dfcf;
   color: var(--ink);
+}
+
+.bookmark-button {
+  min-width: 76px;
+}
+
+.bookmark-button.active {
+  background: #2c2a25;
+  color: #fffdf8;
 }
 
 .small-photo-button {

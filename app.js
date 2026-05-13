@@ -13,9 +13,12 @@ const typeConfig = {
   sleep: { label: "Sleep", icon: "S", color: "#6f7896", amount: "Duration", placeholder: "auto" },
   train: { label: "Train", icon: "T", color: "#817044", amount: "Duration", placeholder: "auto" },
   box: { label: "Box", icon: "B", color: "#8a7768", amount: "Duration", placeholder: "auto" },
+  shower: { label: "Shower", icon: "Sh", color: "#4f8f8a", amount: "Detail", placeholder: "e.g. shampoo, paw wash" },
+  tooth: { label: "Brush teeth", icon: "Bt", color: "#6f8fb4", amount: "Detail", placeholder: "e.g. finger brush, dental gel" },
+  note: { label: "Note", icon: "N", color: "#6e6a5f", amount: "Topic", placeholder: "e.g. mood, symptom, visitor" },
 };
 
-const categoryTypes = ["walk", "food", "water", "weight", "vaccine", "school", "sleep", "box"];
+const categoryTypes = ["walk", "food", "water", "weight", "sleep", "box", "note"];
 const timedQuickTypes = ["walk", "play", "sleep", "train", "box"];
 const timedRecordTypes = ["walk", "play", "sleep", "train", "box"];
 const analyticsStartKey = "2026-05-09";
@@ -39,6 +42,7 @@ let firebasePollTimer = null;
 let activeTimerInterval = null;
 let autoSyncInProgress = false;
 let firebasePollInProgress = false;
+let importInProgress = false;
 let persistOptions = {};
 let selectedStatusYear = today.getFullYear();
 
@@ -59,6 +63,7 @@ const elements = {
   statusSettingsButton: document.querySelector("#statusSettingsButton"),
   selectedDateLabel: document.querySelector("#selectedDateLabel"),
   dayDateInput: document.querySelector("#dayDateInput"),
+  bookmarkDay: document.querySelector("#bookmarkDay"),
   recordTime: document.querySelector("#recordTime"),
   recordStartTime: document.querySelector("#recordStartTime"),
   recordEndTime: document.querySelector("#recordEndTime"),
@@ -197,6 +202,7 @@ function bindEvents() {
     renderDayView();
   });
 
+  elements.bookmarkDay.addEventListener("click", toggleSelectedDateBookmark);
   elements.saveRecord.addEventListener("click", saveRecord);
   elements.cancelEditRecord.addEventListener("click", clearEditMode);
   const syncStartFromMainTime = () => {
@@ -320,6 +326,7 @@ function renderDayView() {
   elements.dayDateInput.value = selectedDate;
   elements.recordTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
   syncDurationVisibility();
+  renderBookmarkButton();
   renderRecords();
 }
 
@@ -402,13 +409,37 @@ function renderCalendar() {
     button.classList.toggle("muted", day.getMonth() !== visibleMonth.getMonth());
     button.classList.toggle("today", key === toKey(today));
     button.classList.toggle("selected", key === selectedDate);
+    button.classList.toggle("bookmarked", isDateBookmarked(key));
     button.innerHTML = `
       <span class="day-number">${day.getDate()}</span>
+      ${isDateBookmarked(key) ? '<span class="day-star" aria-label="Bookmarked day">★</span>' : ""}
       <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
     `;
     button.addEventListener("click", () => showDayView(key));
     elements.calendarGrid.appendChild(button);
   });
+}
+
+function renderBookmarkButton() {
+  const bookmarked = isDateBookmarked(selectedDate);
+  elements.bookmarkDay.classList.toggle("active", bookmarked);
+  elements.bookmarkDay.setAttribute("aria-pressed", String(bookmarked));
+  elements.bookmarkDay.textContent = bookmarked ? "Starred" : "Star";
+}
+
+function toggleSelectedDateBookmark() {
+  const current = state.bookmarks[selectedDate];
+  state.bookmarks[selectedDate] = {
+    bookmarked: !current?.bookmarked,
+    updatedAt: new Date().toISOString(),
+  };
+  persist();
+  renderBookmarkButton();
+  renderCalendar();
+}
+
+function isDateBookmarked(dateKey) {
+  return Boolean(state.bookmarks?.[dateKey]?.bookmarked);
 }
 
 function renderRecords() {
@@ -937,6 +968,7 @@ function getCategoryRecords(type) {
   const typeMap = {
     potty: ["pee", "poop"],
     activity: ["play", "train"],
+    note: ["note", "shower", "tooth", "vaccine", "school"],
   };
   const matchedTypes = typeMap[type] || [type];
   const entries = Object.entries(state.records).flatMap(([date, records]) =>
@@ -949,7 +981,7 @@ function getCategoryRecords(type) {
     type === "vaccine"
       ? entries
       : entries.filter((entry) => {
-          if (["potty", "activity", "sleep", "walk", "food", "water", "school", "box"].includes(type)) {
+          if (["potty", "activity", "sleep", "walk", "food", "water", "school", "box", "note"].includes(type)) {
             return entry.date === toKey(today);
           }
           const [year, month] = entry.date.split("-").map(Number);
@@ -969,6 +1001,9 @@ function getCategoryMeta(type) {
   if (type === "sleep") {
     return { label: "Sleep" };
   }
+  if (type === "note") {
+    return { label: "Notes" };
+  }
   return { label: typeConfig[type]?.label || "Records" };
 }
 
@@ -978,6 +1013,9 @@ function getCategoryForType(type) {
   }
   if (["play", "train"].includes(type)) {
     return "activity";
+  }
+  if (["note", "shower", "tooth", "vaccine", "school"].includes(type)) {
+    return "note";
   }
   return categoryTypes.includes(type) ? type : "";
 }
@@ -1026,6 +1064,20 @@ function getCategoryDetail(entry, activeCategoryType = "") {
     };
   }
 
+  if (entry.type === "note") {
+    return {
+      primary: entry.amount || entry.note || "Side note",
+      secondary: entry.amount ? entry.note : "",
+    };
+  }
+
+  if (entry.type === "shower" || entry.type === "tooth") {
+    return {
+      primary: entry.amount ? `${entry.amount} - ${typeLabel}` : typeLabel,
+      secondary: entry.note,
+    };
+  }
+
   return {
     primary: [entry.amount || typeLabel, typeLabel].filter(Boolean).join(" - "),
     secondary: entry.note,
@@ -1061,8 +1113,8 @@ function renderMonthStats(endDate, stats) {
   return `
     <article class="month-stat">
       <h3>${endDate.toLocaleDateString("en", { month: "short" })}</h3>
-      <p>Pee ${stats.peeTotal} total (${stats.peePerDay} times/day)</p>
-      <p>Poop ${stats.poopTotal} total (${stats.poopPerDay} times/day)</p>
+      <p>Pee ${stats.peeText}</p>
+      <p>Poop ${stats.poopText}</p>
       <p>Pee interval ${stats.peeInterval} - Poop interval ${stats.poopInterval}</p>
       <p>Sleep ${stats.sleepPerDay}/day - Walk ${stats.walkPerDay}/day</p>
       <p>Box ${stats.boxPerDay}/day</p>
@@ -1084,8 +1136,8 @@ function getAvailableRecordYears() {
 
 function renderStatCards(stats) {
   const cards = [
-    ["Pee", `${stats.peeTotal} total (${stats.peePerDay} times/day)`],
-    ["Poop", `${stats.poopTotal} total (${stats.poopPerDay} times/day)`],
+    ["Pee", stats.peeText],
+    ["Poop", stats.poopText],
     ["Pee Interval", stats.peeInterval],
     ["Poop Interval", stats.poopInterval],
     ["Sleep", `${stats.sleepPerDay}/day`],
@@ -1125,6 +1177,8 @@ function calculateStatsForRange(startKey, endKey) {
     poopTotal: count("poop"),
     peePerDay: formatAverage(count("pee") / days),
     poopPerDay: formatAverage(count("poop") / days),
+    peeText: formatTimesPerDay(count("pee"), days),
+    poopText: formatTimesPerDay(count("poop"), days),
     peeInterval: formatAverageInterval(records, "pee"),
     poopInterval: formatAverageInterval(records, "poop"),
     sleepPerDay: formatDuration(duration("sleep") / days),
@@ -1151,6 +1205,10 @@ function formatAverage(value) {
   return Number(value || 0).toFixed(value >= 10 ? 0 : 1);
 }
 
+function formatTimesPerDay(total, days) {
+  return `${formatAverage(total / Math.max(1, days))} times/day (${total} total)`;
+}
+
 function renderDailySummary(type) {
   const dateKey = toKey(today);
   const records = getRecordsForSummary(dateKey, type);
@@ -1173,6 +1231,14 @@ function renderDailySummary(type) {
     parts.push(`${sumAmount(records, "ml")}mL total`);
   } else if (type === "box") {
     parts.push(`${formatDuration(duration)} in box`);
+  } else if (type === "note") {
+    const notes = records.filter((record) => record.type === "note").length;
+    const showers = records.filter((record) => record.type === "shower").length;
+    const teeth = records.filter((record) => record.type === "tooth").length;
+    const vaccines = records.filter((record) => record.type === "vaccine").length;
+    const schools = records.filter((record) => record.type === "school").length;
+    parts.push(`${records.length} side notes today`);
+    parts.push(`${showers} shower`, `${teeth} teeth`, `${vaccines} vaccine`, `${schools} school`, `${notes} notes`);
   } else if (type !== "weight" && type !== "vaccine") {
     parts.push(`${records.length} records today`);
   }
@@ -1189,6 +1255,7 @@ function getRecordsForSummary(dateKey, type) {
   const typeMap = {
     potty: ["pee", "poop"],
     activity: ["play", "train"],
+    note: ["note", "shower", "tooth", "vaccine", "school"],
   };
   const matchedTypes = typeMap[type] || [type];
   return (state.records[dateKey] || []).filter((record) => matchedTypes.includes(record.type));
@@ -1635,27 +1702,46 @@ function escapeCsvCell(value) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
-function importData(event) {
+async function importData(event) {
   const file = event.target.files?.[0];
   if (!file) {
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const imported = importExcelRows(String(reader.result || ""));
-      renderSyncStatus(`Imported ${imported} records from Excel CSV.`);
-    } catch (error) {
-      renderSyncStatus(`Import failed: ${error.message || "use the same CSV format as Excel export."}`);
-    }
+  importInProgress = true;
+  try {
+    const rows = await readImportRows(file);
+    const imported = importExcelRows(rows);
+    renderSyncStatus(`Imported ${imported} records from Excel.`);
+  } catch (error) {
+    renderSyncStatus(`Import failed: ${error.message || "use the same format as Excel export."}`);
+  } finally {
+    importInProgress = false;
     elements.importDataInput.value = "";
-  };
-  reader.readAsText(file);
+    scheduleAutoFirebaseSync();
+  }
 }
 
-function importExcelRows(csvText) {
-  const rows = parseCsv(csvText.replace(/^\ufeff/, ""));
+async function readImportRows(file) {
+  const signature = await readFileSignature(file);
+  if (signature === "PK") {
+    if (!window.XLSX) {
+      throw new Error("Excel importer is still loading. Try again in a moment.");
+    }
+    const buffer = await file.arrayBuffer();
+    const workbook = window.XLSX.read(buffer, { type: "array" });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    return window.XLSX.utils.sheet_to_json(firstSheet, { header: 1, raw: false, defval: "" });
+  }
+  const csvText = await file.text();
+  return parseCsv(csvText.replace(/^\ufeff/, ""));
+}
+
+function readFileSignature(file) {
+  return file.slice(0, 2).text();
+}
+
+function importExcelRows(rows) {
   if (rows.length < 2) {
     throw new Error("no record rows found.");
   }
@@ -1744,6 +1830,20 @@ function parseCsv(text) {
 
 function normalizeImportType(value) {
   const normalized = String(value || "").trim().toLowerCase();
+  const aliases = {
+    teeth: "tooth",
+    tooth: "tooth",
+    "brush teeth": "tooth",
+    "brushing teeth": "tooth",
+    toothbrush: "tooth",
+    "tooth brushing": "tooth",
+    sidenote: "note",
+    "side note": "note",
+    notes: "note",
+  };
+  if (aliases[normalized]) {
+    return aliases[normalized];
+  }
   return Object.keys(typeConfig).find((type) => type === normalized || typeConfig[type].label.toLowerCase() === normalized) || "";
 }
 
@@ -1832,7 +1932,7 @@ async function pullFirebaseSync() {
 }
 
 function scheduleAutoFirebaseSync() {
-  if (persistOptions.skipAutoSync || autoSyncInProgress || !hasFirebaseSettings()) {
+  if (importInProgress || persistOptions.skipAutoSync || autoSyncInProgress || !hasFirebaseSettings()) {
     return;
   }
   window.clearTimeout(autoSyncTimer);
@@ -1840,7 +1940,7 @@ function scheduleAutoFirebaseSync() {
 }
 
 async function autoFirebaseSync() {
-  if (!hasFirebaseSettings() || autoSyncInProgress) {
+  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress) {
     return;
   }
   autoSyncInProgress = true;
@@ -1886,7 +1986,7 @@ function startFirebasePolling() {
 }
 
 async function pollFirebaseSync() {
-  if (!hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress) {
+  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress) {
     return;
   }
 
@@ -1970,11 +2070,52 @@ function mergeStates(local, remote) {
   merged.settings = { ...remote.settings, ...local.settings };
   merged.vaccination = { ...remote.vaccination, ...local.vaccination };
   merged.sync = { ...remote.sync, ...local.sync };
+  merged.bookmarks = mergeBookmarks(local.bookmarks || {}, remote.bookmarks || {});
   merged.deletedRecordIds = deletedRecordIds;
   merged.stoppedSessionIds = stoppedSessionIds;
   merged.records = mergeRecords(local.records || {}, remote.records || {}, deletedRecordIds);
   merged.activeSessions = mergeActiveSessions(local.activeSessions || {}, remote.activeSessions || {}, stoppedSessionIds);
   return merged;
+}
+
+function mergeBookmarks(localBookmarks, remoteBookmarks) {
+  const merged = {};
+  const dates = new Set([...Object.keys(remoteBookmarks || {}), ...Object.keys(localBookmarks || {})]);
+  dates.forEach((date) => {
+    const local = normalizeBookmark(localBookmarks[date]);
+    const remote = normalizeBookmark(remoteBookmarks[date]);
+    if (!local) {
+      merged[date] = remote;
+      return;
+    }
+    if (!remote) {
+      merged[date] = local;
+      return;
+    }
+    merged[date] = local.updatedAt >= remote.updatedAt ? local : remote;
+  });
+  return Object.fromEntries(Object.entries(merged).filter(([, value]) => value));
+}
+
+function normalizeBookmark(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return { bookmarked: value, updatedAt: "" };
+  }
+  return {
+    bookmarked: Boolean(value.bookmarked),
+    updatedAt: value.updatedAt || "",
+  };
+}
+
+function normalizeBookmarks(bookmarks) {
+  return Object.fromEntries(
+    Object.entries(bookmarks || {})
+      .map(([date, value]) => [date, normalizeBookmark(value)])
+      .filter(([date, value]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && value)
+  );
 }
 
 function normalizeActiveSession(type, value) {
@@ -2297,6 +2438,7 @@ function loadState() {
     activeSessions: {},
     stoppedSessionIds: [],
     deletedRecordIds: [],
+    bookmarks: {},
     vaccination: { rabiesDate: "", rabiesValidUntil: "" },
     settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
     photos: [],
@@ -2376,6 +2518,7 @@ function migrateState(value) {
     activeSessions: normalizeActiveSessions(value.activeSessions || {}),
     stoppedSessionIds: Array.isArray(value.stoppedSessionIds) ? value.stoppedSessionIds : [],
     deletedRecordIds: Array.isArray(value.deletedRecordIds) ? value.deletedRecordIds : [],
+    bookmarks: normalizeBookmarks(value.bookmarks || {}),
     vaccination: {
       rabiesDate: value.vaccination?.rabiesDate || "",
       rabiesValidUntil: value.vaccination?.rabiesValidUntil || "",
