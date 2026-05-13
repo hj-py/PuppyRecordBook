@@ -1,9 +1,9 @@
 const storageKey = "puppy-record-book-state";
-const syncTableName = "puppy_books";
 
 const typeConfig = {
   walk: { label: "Walk", icon: "W", color: "#617861", amount: "Minutes", placeholder: "e.g. 30 min" },
   food: { label: "Food", icon: "F", color: "#d69b41", amount: "Amount", placeholder: "e.g. 120g" },
+  water: { label: "Water", icon: "Wa", color: "#5799ad", amount: "Amount", placeholder: "e.g. fresh bowl" },
   poop: { label: "Poop", icon: "P", color: "#7b5f45", amount: "Result", placeholder: "normal, soft..." },
   pee: { label: "Pee", icon: "P", color: "#7fa6b8", amount: "Result", placeholder: "clear, frequent..." },
   weight: { label: "Weight", icon: "Kg", color: "#c86f5c", amount: "Weight", placeholder: "e.g. 4.8kg" },
@@ -12,10 +12,13 @@ const typeConfig = {
   play: { label: "Play", icon: "Pl", color: "#d68a6a", amount: "Duration", placeholder: "auto" },
   sleep: { label: "Sleep", icon: "S", color: "#6f7896", amount: "Duration", placeholder: "auto" },
   train: { label: "Train", icon: "T", color: "#817044", amount: "Duration", placeholder: "auto" },
+  box: { label: "Box", icon: "B", color: "#8a7768", amount: "Duration", placeholder: "auto" },
 };
 
-const categoryTypes = ["walk", "food", "weight", "vaccine", "school"];
-const timedQuickTypes = ["walk", "play", "sleep", "train"];
+const categoryTypes = ["walk", "food", "water", "weight", "vaccine", "school", "sleep", "box"];
+const timedQuickTypes = ["walk", "play", "sleep", "train", "box"];
+const timedRecordTypes = ["walk", "play", "sleep", "train", "box"];
+const analyticsStartKey = "2026-05-09";
 const defaultPhoto =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='78' r='46' fill='%23b98b68'/%3E%3Ccircle cx='48' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='112' cy='54' r='22' fill='%23816045'/%3E%3Ccircle cx='64' cy='74' r='6' fill='%2325231f'/%3E%3Ccircle cx='96' cy='74' r='6' fill='%2325231f'/%3E%3Cellipse cx='80' cy='90' rx='10' ry='7' fill='%2325231f'/%3E%3Cpath d='M66 105c10 9 20 9 29 0' fill='none' stroke='%2325231f' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E";
 
@@ -31,21 +34,33 @@ let touchStartX = 0;
 let touchStartY = 0;
 let editingRecordId = null;
 let firebaseServices = null;
+let autoSyncTimer = null;
+let autoSyncInProgress = false;
+let persistOptions = {};
+let selectedStatusYear = today.getFullYear();
 
 const elements = {
   mainView: document.querySelector("#mainView"),
   dayView: document.querySelector("#dayView"),
   profileView: document.querySelector("#profileView"),
+  statusView: document.querySelector("#statusView"),
   currentMonth: document.querySelector("#currentMonth"),
   profileButton: document.querySelector("#profileButton"),
+  statusButton: document.querySelector("#statusButton"),
   previousMonth: document.querySelector("#previousMonth"),
   nextMonth: document.querySelector("#nextMonth"),
   calendarGrid: document.querySelector("#calendarGrid"),
   backToMain: document.querySelector("#backToMain"),
   backFromProfile: document.querySelector("#backFromProfile"),
+  backFromStatus: document.querySelector("#backFromStatus"),
+  statusSettingsButton: document.querySelector("#statusSettingsButton"),
   selectedDateLabel: document.querySelector("#selectedDateLabel"),
   dayDateInput: document.querySelector("#dayDateInput"),
   recordTime: document.querySelector("#recordTime"),
+  recordStartTime: document.querySelector("#recordStartTime"),
+  recordEndTime: document.querySelector("#recordEndTime"),
+  recordDuration: document.querySelector("#recordDuration"),
+  durationFields: document.querySelector("#durationFields"),
   recordAmount: document.querySelector("#recordAmount"),
   recordNote: document.querySelector("#recordNote"),
   amountField: document.querySelector("#amountField"),
@@ -59,7 +74,11 @@ const elements = {
   growthInsight: document.querySelector("#growthInsight"),
   categoryTitle: document.querySelector("#categoryTitle"),
   categoryCount: document.querySelector("#categoryCount"),
+  categorySummary: document.querySelector("#categorySummary"),
   categoryList: document.querySelector("#categoryList"),
+  annualStats: document.querySelector("#annualStats"),
+  monthlyStats: document.querySelector("#monthlyStats"),
+  statusYearSelect: document.querySelector("#statusYearSelect"),
   activeSessionCount: document.querySelector("#activeSessionCount"),
   quickLogStatus: document.querySelector("#quickLogStatus"),
   heroPhoto: document.querySelector("#heroPhoto"),
@@ -96,14 +115,11 @@ const elements = {
   installAppButton: document.querySelector("#installAppButton"),
   installStatus: document.querySelector("#installStatus"),
   syncCode: document.querySelector("#syncCode"),
-  syncUrl: document.querySelector("#syncUrl"),
-  syncKey: document.querySelector("#syncKey"),
-  pushSyncButton: document.querySelector("#pushSyncButton"),
-  pullSyncButton: document.querySelector("#pullSyncButton"),
   pushFirebaseButton: document.querySelector("#pushFirebaseButton"),
   pullFirebaseButton: document.querySelector("#pullFirebaseButton"),
   firebaseConfig: document.querySelector("#firebaseConfig"),
   exportDataButton: document.querySelector("#exportDataButton"),
+  exportExcelButton: document.querySelector("#exportExcelButton"),
   importDataInput: document.querySelector("#importDataInput"),
   syncStatus: document.querySelector("#syncStatus"),
 };
@@ -141,12 +157,29 @@ function bindEvents() {
     showProfileView();
   });
 
+  elements.statusButton.addEventListener("click", () => {
+    showStatusView();
+  });
+
   elements.backToMain.addEventListener("click", () => {
     showMainView();
   });
 
   elements.backFromProfile.addEventListener("click", () => {
     showMainView();
+  });
+
+  elements.backFromStatus.addEventListener("click", () => {
+    showMainView();
+  });
+
+  elements.statusSettingsButton.addEventListener("click", () => {
+    showProfileView();
+  });
+
+  elements.statusYearSelect.addEventListener("input", () => {
+    selectedStatusYear = Number(elements.statusYearSelect.value) || today.getFullYear();
+    renderStatusView();
   });
 
   elements.dayDateInput.addEventListener("input", () => {
@@ -161,6 +194,20 @@ function bindEvents() {
 
   elements.saveRecord.addEventListener("click", saveRecord);
   elements.cancelEditRecord.addEventListener("click", clearEditMode);
+  const syncStartFromMainTime = () => {
+    if (timedRecordTypes.includes(activeType)) {
+      elements.recordStartTime.value = elements.recordTime.value;
+      syncEndFromDuration();
+    }
+  };
+  elements.recordTime.addEventListener("input", syncStartFromMainTime);
+  elements.recordTime.addEventListener("change", syncStartFromMainTime);
+  elements.recordStartTime.addEventListener("input", syncDurationFromEnd);
+  elements.recordStartTime.addEventListener("change", syncDurationFromEnd);
+  elements.recordEndTime.addEventListener("input", syncDurationFromEnd);
+  elements.recordEndTime.addEventListener("change", syncDurationFromEnd);
+  elements.recordDuration.addEventListener("input", syncEndFromDuration);
+  elements.recordDuration.addEventListener("change", syncEndFromDuration);
 
   document.querySelectorAll(".type-button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -182,15 +229,16 @@ function bindEvents() {
     button.addEventListener("click", () => handleQuickLog(button.dataset.action));
   });
 
-  [elements.puppyName, elements.adultWeight].forEach((input) => {
-    input.addEventListener("input", () => {
-      state.profile.name = elements.puppyName.value.trim() || "Puppy";
-      state.profile.weightKg = Number(elements.adultWeight.value) || state.profile.weightKg;
-      persist();
-      hydrateProfileForm();
-      renderAge();
-      renderInsight();
-    });
+  elements.puppyName.addEventListener("input", () => {
+    state.profile.name = elements.puppyName.value.trim() || "Puppy";
+    persist();
+    hydrateProfileForm();
+    renderAge();
+    renderInsight();
+  });
+
+  elements.adultWeight.addEventListener("change", () => {
+    recordMainWeightChange();
   });
 
   getProfileInputs().forEach((input) => {
@@ -226,20 +274,17 @@ function bindEvents() {
   });
 
   elements.installAppButton.addEventListener("click", installPwa);
-  elements.pushSyncButton.addEventListener("click", pushCloudSync);
-  elements.pullSyncButton.addEventListener("click", pullCloudSync);
   elements.pushFirebaseButton.addEventListener("click", pushFirebaseSync);
   elements.pullFirebaseButton.addEventListener("click", pullFirebaseSync);
   elements.exportDataButton.addEventListener("click", exportData);
+  elements.exportExcelButton.addEventListener("click", exportExcelData);
   elements.importDataInput.addEventListener("change", importData);
 
-  [elements.syncCode, elements.syncUrl, elements.syncKey, elements.firebaseConfig].forEach((input) => {
+  [elements.syncCode, elements.firebaseConfig].forEach((input) => {
     input.addEventListener("input", () => {
       state.sync.code = elements.syncCode.value.trim();
-      state.sync.url = elements.syncUrl.value.trim();
-      state.sync.key = elements.syncKey.value.trim();
       state.sync.firebaseConfig = elements.firebaseConfig.value.trim();
-      persist();
+      persist({ skipAutoSync: true });
     });
   });
 
@@ -257,6 +302,7 @@ function renderMain() {
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
   elements.profileView.hidden = true;
+  elements.statusView.hidden = true;
   renderCalendar();
   renderAge();
   renderInsight();
@@ -269,6 +315,7 @@ function renderDayView() {
   elements.selectedDateLabel.textContent = formatSelectedDate(selectedDate);
   elements.dayDateInput.value = selectedDate;
   elements.recordTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
+  syncDurationVisibility();
   renderRecords();
 }
 
@@ -280,6 +327,7 @@ function showDayView(dateKey) {
   elements.mainView.hidden = true;
   elements.dayView.hidden = false;
   elements.profileView.hidden = true;
+  elements.statusView.hidden = true;
   renderDayView();
 }
 
@@ -288,6 +336,7 @@ function showMainView() {
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
   elements.profileView.hidden = true;
+  elements.statusView.hidden = true;
   renderMain();
 }
 
@@ -296,8 +345,44 @@ function showProfileView() {
   elements.mainView.hidden = true;
   elements.dayView.hidden = true;
   elements.profileView.hidden = false;
+  elements.statusView.hidden = true;
   hydrateProfileForm();
   renderReminderSections();
+}
+
+function showStatusView() {
+  currentView = "status";
+  elements.mainView.hidden = true;
+  elements.dayView.hidden = true;
+  elements.profileView.hidden = true;
+  elements.statusView.hidden = false;
+  renderStatusView();
+}
+
+function recordMainWeightChange() {
+  const value = Number(elements.adultWeight.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    hydrateMainProfile();
+    return;
+  }
+
+  const dateKey = toKey(new Date());
+  const time = new Date().toTimeString().slice(0, 5);
+  const existing = (state.records[dateKey] || []).find((record) => record.type === "weight" && record.note === "Main page weight update");
+  if (existing) {
+    existing.time = time;
+    existing.amount = `${value}kg`;
+  } else {
+    state.records[dateKey] = [
+      ...(state.records[dateKey] || []),
+      { id: createId(), type: "weight", time, amount: `${value}kg`, note: "Main page weight update" },
+    ];
+  }
+  state.profile.weightKg = value;
+  hydrateProfileForm();
+  renderInsight();
+  renderCategory();
+  persist();
 }
 
 function renderCalendar() {
@@ -345,13 +430,7 @@ function renderRecords() {
       <button class="delete-button" type="button" aria-label="Delete record">x</button>
     `;
     item.querySelector("button").addEventListener("click", () => {
-      state.records[selectedDate] = (state.records[selectedDate] || []).filter((entry) => entry.id !== record.id);
-      if (!state.records[selectedDate].length) {
-        delete state.records[selectedDate];
-      }
-      syncProfileWeightFromRecords();
-      persist();
-      renderDayView();
+      deleteRecord(selectedDate, record.id);
     });
     item.addEventListener("click", (event) => {
       if (event.target.closest("button")) {
@@ -361,6 +440,22 @@ function renderRecords() {
     });
     elements.recordList.appendChild(item);
   });
+}
+
+function deleteRecord(dateKey, recordId) {
+  state.records[dateKey] = (state.records[dateKey] || []).filter((entry) => entry.id !== recordId);
+  if (!state.records[dateKey].length) {
+    delete state.records[dateKey];
+  }
+  state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), recordId]));
+  if (editingRecordId === recordId) {
+    clearEditMode();
+  }
+  syncProfileWeightFromRecords();
+  persist();
+  renderDayView();
+  renderCategory();
+  renderCalendar();
 }
 
 function renderAge() {
@@ -425,6 +520,7 @@ function handleQuickLog(type) {
 
 function addQuickRecord(type, amount, note, time = new Date()) {
   const dateKey = toKey(time);
+  const durationMinutes = timedRecordTypes.includes(type) ? parseDurationMinutes(amount) : 0;
   const record = {
     id: createId(),
     type,
@@ -432,6 +528,11 @@ function addQuickRecord(type, amount, note, time = new Date()) {
     amount,
     note,
   };
+  if (durationMinutes) {
+    record.startTime = record.time;
+    record.durationMinutes = durationMinutes;
+    record.endTime = addMinutesToTime(record.startTime, durationMinutes);
+  }
 
   state.records[dateKey] = [...(state.records[dateKey] || []), record];
   selectedDate = dateKey;
@@ -457,6 +558,7 @@ function toggleTimedQuickLog(type) {
   const amount = `${minutes} min`;
   const note = `${formatTime(start.toTimeString().slice(0, 5))} - ${formatTime(now.toTimeString().slice(0, 5))}`;
   delete state.activeSessions[type];
+  renderQuickLogButtons();
   addQuickRecord(type, amount, note, start);
   elements.quickLogStatus.textContent = `${typeConfig[type].label} ended. ${amount} saved.`;
 }
@@ -490,6 +592,49 @@ function minutesOfDay(time) {
   return hours * 60 + minutes;
 }
 
+function durationFromTimes(startTime, endTime) {
+  if (!startTime || !endTime) {
+    return 0;
+  }
+  let duration = minutesOfDay(endTime) - minutesOfDay(startTime);
+  if (duration <= 0) {
+    duration += 1440;
+  }
+  return duration;
+}
+
+function addMinutesToTime(time, minutesToAdd) {
+  const total = (minutesOfDay(time) + Number(minutesToAdd || 0)) % 1440;
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function parseDurationMinutes(value) {
+  const match = String(value || "").match(/(\d+(?:[.,]\d+)?)/);
+  return match ? Math.round(Number(match[1].replace(",", "."))) : 0;
+}
+
+function getRecordDuration(record) {
+  if (Number.isFinite(Number(record.durationMinutes))) {
+    return Number(record.durationMinutes);
+  }
+  if (record.startTime && record.endTime) {
+    return durationFromTimes(record.startTime, record.endTime);
+  }
+  return parseDurationMinutes(record.amount);
+}
+
+function formatDuration(minutes) {
+  const total = Math.round(minutes || 0);
+  if (total < 60) {
+    return `${total} min`;
+  }
+  const hours = Math.floor(total / 60);
+  const mins = total % 60;
+  return mins ? `${hours} hr ${mins} min` : `${hours} hr`;
+}
+
 function renderCategory() {
   if (activeCategory === "weight") {
     renderGrowthCategory();
@@ -500,10 +645,11 @@ function renderCategory() {
   const records = getCategoryRecords(activeCategory);
   elements.categoryTitle.textContent = `${category.label} Records`;
   elements.categoryCount.textContent = records.length;
+  elements.categorySummary.innerHTML = renderDailySummary(activeCategory);
   elements.categoryList.innerHTML = "";
 
   if (!records.length) {
-    const range = activeCategory === "vaccine" ? "yet" : "this month";
+    const range = activeCategory === "vaccine" ? "yet" : "today";
     elements.categoryList.innerHTML = `<p class="empty-state">No ${category.label.toLowerCase()} records ${range}.</p>`;
     return;
   }
@@ -518,16 +664,30 @@ function renderCategory() {
         <p class="category-detail">${escapeHtml(detail.primary)}</p>
         ${detail.secondary ? `<p class="category-subtext">${escapeHtml(detail.secondary)}</p>` : ""}
       </div>
+      <button class="delete-button category-delete" type="button" aria-label="Delete record">x</button>
     `;
-    item.addEventListener("click", () => showDayView(entry.date));
+    item.querySelector(".category-delete").addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteRecord(entry.date, entry.id);
+    });
+    item.addEventListener("click", () => openCategoryRecord(entry));
     elements.categoryList.appendChild(item);
   });
+}
+
+function openCategoryRecord(entry) {
+  showDayView(entry.date);
+  const record = (state.records[entry.date] || []).find((item) => item.id === entry.id);
+  if (record) {
+    startEditRecord(record);
+  }
 }
 
 function renderGrowthCategory() {
   const weights = getWeightRecords();
   elements.categoryTitle.textContent = "Weight Records";
   elements.categoryCount.textContent = weights.length;
+  elements.categorySummary.innerHTML = renderDailySummary("weight");
 
   if (!weights.length) {
     elements.categoryList.innerHTML = `<p class="empty-state">No weight records yet. Add weight records to draw the graph.</p>`;
@@ -547,7 +707,7 @@ function renderGrowthCategory() {
       .reverse()
       .map(
         (entry) => `
-          <article class="category-item">
+          <article class="category-item" data-date="${escapeHtml(entry.date)}" data-record-id="${escapeHtml(entry.id || "")}">
             <div class="category-date">${escapeHtml(formatShortDate(entry.date))}</div>
             <div>
               <p class="category-detail">${entry.value.toFixed(1)}kg</p>
@@ -558,6 +718,17 @@ function renderGrowthCategory() {
       )
       .join("")}
   `;
+  elements.categoryList.querySelectorAll(".category-item[data-record-id]").forEach((item) => {
+    item.addEventListener("click", () => {
+      const date = item.dataset.date;
+      const id = item.dataset.recordId;
+      const record = (state.records[date] || []).find((entry) => entry.id === id);
+      if (record) {
+        showDayView(date);
+        startEditRecord(record);
+      }
+    });
+  });
 }
 
 function renderWeightGraph(weights) {
@@ -599,13 +770,7 @@ function saveRecord() {
     return;
   }
 
-  const record = {
-    id: createId(),
-    type: activeType,
-    time: elements.recordTime.value || new Date().toTimeString().slice(0, 5),
-    amount: elements.recordAmount.value.trim(),
-    note: elements.recordNote.value.trim(),
-  };
+  const record = buildRecordFromForm(createId());
 
   state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
   if (record.type === "weight") {
@@ -616,23 +781,58 @@ function saveRecord() {
       hydrateProfileForm();
     }
   }
-  if (categoryTypes.includes(activeType)) {
-    activeCategory = activeType;
+  const nextCategory = getCategoryForType(activeType);
+  if (nextCategory) {
+    activeCategory = nextCategory;
     document.querySelectorAll(".category-tab").forEach((button) => {
       button.classList.toggle("selected", button.dataset.category === activeCategory);
     });
   }
 
-  elements.recordAmount.value = "";
-  elements.recordNote.value = "";
+  clearFormAfterSave();
   persist();
   renderDayView();
+}
+
+function buildRecordFromForm(id) {
+  const record = {
+    id: createId(),
+    type: activeType,
+    time: elements.recordTime.value || elements.recordStartTime.value || new Date().toTimeString().slice(0, 5),
+    amount: elements.recordAmount.value.trim(),
+    note: elements.recordNote.value.trim(),
+  };
+
+  record.id = id;
+  if (timedRecordTypes.includes(activeType)) {
+    const startTime = elements.recordStartTime.value || record.time;
+    const durationMinutes = Math.max(1, durationFromTimes(startTime, elements.recordEndTime.value) || Number(elements.recordDuration.value) || parseDurationMinutes(record.amount) || 1);
+    const endTime = elements.recordEndTime.value || addMinutesToTime(startTime, durationMinutes);
+    record.time = startTime;
+    record.startTime = startTime;
+    record.endTime = endTime;
+    record.durationMinutes = durationMinutes;
+    record.amount = `${durationMinutes} min`;
+  }
+
+  return record;
+}
+
+function clearFormAfterSave() {
+  elements.recordAmount.value = "";
+  elements.recordNote.value = "";
+  elements.recordEndTime.value = "";
+  elements.recordDuration.value = "";
+  elements.recordStartTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
 }
 
 function startEditRecord(record) {
   editingRecordId = record.id;
   activeType = record.type;
   elements.recordTime.value = record.time;
+  elements.recordStartTime.value = record.startTime || record.time;
+  elements.recordEndTime.value = record.endTime || "";
+  elements.recordDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
   elements.recordAmount.value = record.amount || "";
   elements.recordNote.value = record.note || "";
   document.querySelectorAll(".type-button").forEach((button) => {
@@ -652,10 +852,7 @@ function updateEditedRecord() {
     return;
   }
 
-  record.type = activeType;
-  record.time = elements.recordTime.value || record.time;
-  record.amount = elements.recordAmount.value.trim();
-  record.note = elements.recordNote.value.trim();
+  Object.assign(record, buildRecordFromForm(record.id));
   if (record.type === "weight") {
     const parsedWeight = parseWeight(record.amount);
     if (Number.isFinite(parsedWeight)) {
@@ -672,8 +869,11 @@ function clearEditMode() {
   editingRecordId = null;
   elements.recordAmount.value = "";
   elements.recordNote.value = "";
+  elements.recordEndTime.value = "";
+  elements.recordDuration.value = "";
   elements.saveRecord.textContent = "Save";
   elements.cancelEditRecord.hidden = true;
+  syncDurationVisibility();
 }
 
 async function addProfilePhotoFromInput(input) {
@@ -704,7 +904,7 @@ function getCategoryRecords(type) {
     type === "vaccine"
       ? entries
       : entries.filter((entry) => {
-          if (["potty", "activity", "sleep", "walk", "food", "school"].includes(type)) {
+          if (["potty", "activity", "sleep", "walk", "food", "water", "school", "box"].includes(type)) {
             return entry.date === toKey(today);
           }
           const [year, month] = entry.date.split("-").map(Number);
@@ -727,6 +927,16 @@ function getCategoryMeta(type) {
   return { label: typeConfig[type]?.label || "Records" };
 }
 
+function getCategoryForType(type) {
+  if (["pee", "poop"].includes(type)) {
+    return "potty";
+  }
+  if (["play", "train"].includes(type)) {
+    return "activity";
+  }
+  return categoryTypes.includes(type) ? type : "";
+}
+
 function getCategoryDetail(entry, activeCategoryType = "") {
   const typeLabel = typeConfig[entry.type]?.label || entry.type;
   if (activeCategoryType === "potty" || activeCategoryType === "activity") {
@@ -739,7 +949,14 @@ function getCategoryDetail(entry, activeCategoryType = "") {
   if (entry.type === "walk") {
     return {
       primary: [entry.amount || "Walk", entry.note].filter(Boolean).join(" - "),
-      secondary: "Monthly walk record",
+      secondary: [formatTime(entry.startTime || entry.time), entry.endTime ? formatTime(entry.endTime) : "Today walk record"].filter(Boolean).join(" - "),
+    };
+  }
+
+  if (timedRecordTypes.includes(entry.type)) {
+    return {
+      primary: [entry.amount || "Duration", typeLabel].filter(Boolean).join(" - "),
+      secondary: [formatTime(entry.startTime || entry.time), entry.endTime ? formatTime(entry.endTime) : "", entry.note].filter(Boolean).join(" - "),
     };
   }
 
@@ -765,9 +982,213 @@ function getCategoryDetail(entry, activeCategoryType = "") {
   }
 
   return {
-    primary: entry.amount || "Food",
+    primary: [entry.amount || typeLabel, typeLabel].filter(Boolean).join(" - "),
     secondary: entry.note,
   };
+}
+
+function renderStatusView() {
+  const years = getAvailableRecordYears();
+  if (!years.includes(selectedStatusYear)) {
+    selectedStatusYear = years[0] || today.getFullYear();
+  }
+  elements.statusYearSelect.innerHTML = years.map((year) => `<option value="${year}">${year}</option>`).join("");
+  elements.statusYearSelect.value = String(selectedStatusYear);
+  const year = selectedStatusYear;
+  const yearEnd = year === today.getFullYear() ? toKey(today) : `${year}-12-31`;
+  const yearStats = calculateStatsForRange(maxDateKey(`${year}-01-01`, analyticsStartKey), yearEnd);
+  elements.annualStats.innerHTML = renderStatCards(yearStats);
+  const monthCount = year === today.getFullYear() ? today.getMonth() + 1 : 12;
+  elements.monthlyStats.innerHTML = Array.from({ length: monthCount }, (_, index) => {
+    const month = index + 1;
+    const start = `${year}-${String(month).padStart(2, "0")}-01`;
+    const endDate = new Date(year, month, 0);
+    const end = year === today.getFullYear() && month === today.getMonth() + 1 ? toKey(today) : toKey(endDate);
+    if (end < analyticsStartKey) {
+      return "";
+    }
+    const stats = calculateStatsForRange(maxDateKey(start, analyticsStartKey), end);
+    return renderMonthStats(endDate, stats);
+  }).join("");
+}
+
+function renderMonthStats(endDate, stats) {
+  return `
+    <article class="month-stat">
+      <h3>${endDate.toLocaleDateString("en", { month: "short" })}</h3>
+      <p>Pee ${stats.peeTotal} total (${stats.peePerDay} times/day)</p>
+      <p>Poop ${stats.poopTotal} total (${stats.poopPerDay} times/day)</p>
+      <p>Pee interval ${stats.peeInterval} - Poop interval ${stats.poopInterval}</p>
+      <p>Sleep ${stats.sleepPerDay}/day - Walk ${stats.walkPerDay}/day</p>
+      <p>Box ${stats.boxPerDay}/day</p>
+      <p>${stats.weightText}</p>
+    </article>
+  `;
+}
+
+function getAvailableRecordYears() {
+  const years = new Set([today.getFullYear()]);
+  Object.keys(state.records || {}).forEach((date) => {
+    const year = Number(date.slice(0, 4));
+    if (year) {
+      years.add(year);
+    }
+  });
+  return Array.from(years).sort((a, b) => b - a);
+}
+
+function renderStatCards(stats) {
+  const cards = [
+    ["Pee", `${stats.peeTotal} total (${stats.peePerDay} times/day)`],
+    ["Poop", `${stats.poopTotal} total (${stats.poopPerDay} times/day)`],
+    ["Pee Interval", stats.peeInterval],
+    ["Poop Interval", stats.poopInterval],
+    ["Sleep", `${stats.sleepPerDay}/day`],
+    ["Walk", `${stats.walkPerDay}/day`],
+    ["Box", `${stats.boxPerDay}/day`],
+    ["Weight", stats.weightText],
+  ];
+  return cards
+    .map(
+      ([label, value]) => `
+        <article class="stat-card">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
+}
+
+function calculateStatsForRange(startKey, endKey) {
+  const effectiveStartKey = maxDateKey(startKey, analyticsStartKey);
+  const records = Object.entries(state.records)
+    .filter(([date]) => date >= effectiveStartKey && date <= endKey)
+    .flatMap(([date, entries]) => entries.map((entry) => ({ ...entry, date })));
+  const days = Math.max(1, countDaysInclusive(effectiveStartKey, endKey));
+  const count = (type) => records.filter((record) => record.type === type).length;
+  const duration = (type) => records.filter((record) => record.type === type).reduce((total, record) => total + getRecordDuration(record), 0);
+  const weights = records
+    .filter((record) => record.type === "weight")
+    .map((record) => ({ date: record.date, value: parseWeight(record.amount) }))
+    .filter((record) => Number.isFinite(record.value))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const latestWeight = weights.at(-1);
+  const firstWeight = weights[0];
+  return {
+    peeTotal: count("pee"),
+    poopTotal: count("poop"),
+    peePerDay: formatAverage(count("pee") / days),
+    poopPerDay: formatAverage(count("poop") / days),
+    peeInterval: formatAverageInterval(records, "pee"),
+    poopInterval: formatAverageInterval(records, "poop"),
+    sleepPerDay: formatDuration(duration("sleep") / days),
+    walkPerDay: formatDuration(duration("walk") / days),
+    boxPerDay: formatDuration(duration("box") / days),
+    weightText: latestWeight ? `${latestWeight.value.toFixed(1)}kg${firstWeight && firstWeight !== latestWeight ? ` from ${firstWeight.value.toFixed(1)}kg` : ""}` : "No data",
+  };
+}
+
+function maxDateKey(a, b) {
+  return a > b ? a : b;
+}
+
+function countDaysInclusive(startKey, endKey) {
+  const start = parseDateKey(startKey);
+  const end = parseDateKey(endKey);
+  if (!start || !end) {
+    return 1;
+  }
+  return Math.max(1, Math.round((end - start) / 86400000) + 1);
+}
+
+function formatAverage(value) {
+  return Number(value || 0).toFixed(value >= 10 ? 0 : 1);
+}
+
+function renderDailySummary(type) {
+  const dateKey = toKey(today);
+  const records = getRecordsForSummary(dateKey, type);
+  const parts = [];
+  const duration = records.reduce((total, record) => total + getRecordDuration(record), 0);
+
+  if (duration && ["walk", "activity", "sleep"].includes(type)) {
+    parts.push(`${formatDuration(duration)} total`);
+  }
+  if (type === "potty") {
+    const pee = records.filter((record) => record.type === "pee").length;
+    const poop = records.filter((record) => record.type === "poop").length;
+    parts.push(`${pee} pee`, `${poop} poop`);
+    parts.push(`Pee interval ${formatAverageInterval(records, "pee")}`);
+    parts.push(`Poop interval ${formatAverageInterval(records, "poop")}`);
+  } else if (type === "food") {
+    parts.push(`${sumAmount(records, "g")}g consumed`);
+  } else if (type === "water") {
+    parts.push(`${records.length} times today`);
+    parts.push(`${sumAmount(records, "ml")}mL total`);
+  } else if (type === "box") {
+    parts.push(`${formatDuration(duration)} in box`);
+  } else if (type !== "weight" && type !== "vaccine") {
+    parts.push(`${records.length} records today`);
+  }
+
+  if (type === "weight") {
+    const latest = getWeightRecords().at(-1);
+    parts.push(latest ? `Latest ${latest.value.toFixed(1)}kg` : "No weight yet");
+  }
+
+  return parts.length ? parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("") : "<span>No records today</span>";
+}
+
+function getRecordsForSummary(dateKey, type) {
+  const typeMap = {
+    potty: ["pee", "poop"],
+    activity: ["play", "train"],
+  };
+  const matchedTypes = typeMap[type] || [type];
+  return (state.records[dateKey] || []).filter((record) => matchedTypes.includes(record.type));
+}
+
+function sumAmount(records, unit) {
+  return Math.round(
+    records.reduce((total, record) => {
+      const value = parseAmountForUnit(record.amount, unit);
+      return total + (Number.isFinite(value) ? value : 0);
+    }, 0)
+  );
+}
+
+function parseAmountForUnit(value, unit) {
+  const text = String(value || "").toLowerCase();
+  const unitPattern = unit === "ml" ? "m\\s*l|ml|milliliter|milliliters" : "g|gram|grams";
+  const unitMatch = text.match(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(?:${unitPattern})`));
+  if (unitMatch) {
+    return Number(unitMatch[1].replace(",", "."));
+  }
+  const plain = text.match(/(\d+(?:[.,]\d+)?)/);
+  return plain ? Number(plain[1].replace(",", ".")) : 0;
+}
+
+function formatAverageInterval(records, type) {
+  const intervals = getSameDayIntervals(records.filter((record) => record.type === type));
+  if (!intervals.length) {
+    return "not enough data";
+  }
+  const average = intervals.reduce((total, value) => total + value, 0) / intervals.length;
+  return formatDuration(average);
+}
+
+function getSameDayIntervals(records) {
+  const byDate = new Map();
+  records.forEach((record) => {
+    const list = byDate.get(record.date) || [];
+    list.push(record);
+    byDate.set(record.date, list);
+  });
+  return Array.from(byDate.values()).flatMap((items) => {
+    const sorted = items.slice().sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    return sorted.slice(1).map((record, index) => durationFromTimes(sorted[index].time, record.time));
+  });
 }
 
 function syncProfileWeightFromRecords() {
@@ -822,10 +1243,8 @@ function hydrateProfileForm() {
   elements.foodAmountAfternoon.value = state.foodSettings.amounts.afternoon;
   elements.foodAmountEvening.value = state.foodSettings.amounts.evening;
   elements.syncCode.value = state.sync.code;
-  elements.syncUrl.value = state.sync.url;
-  elements.syncKey.value = state.sync.key;
   elements.firebaseConfig.value = state.sync.firebaseConfig;
-  renderSyncStatus(state.sync.lastSync ? `Last sync: ${state.sync.lastSync}` : "Use the same sync code on each phone. Push uploads this puppy book; Pull downloads the shared copy.");
+  renderSyncStatus(state.sync.lastSync ? `Last sync: ${state.sync.lastSync}` : "Use the same sync code and Firebase config on each phone. Auto-sync runs after edits.");
 }
 
 function syncProfileFromForm() {
@@ -1001,10 +1420,11 @@ function getFoodReminders() {
 
   return times.map(([label, time]) => {
     const nextMeal = getNextDailyOccurrence(time);
+    const reminderTime = new Date(nextMeal.getTime() - 5 * 60000);
     return {
       title: `${label}: ${formatTime(time)}`,
-      body: `Next reminder ${formatDateKey(toKey(nextMeal))} ${formatTime(time)}`,
-      urgent: minutesUntil(nextMeal) <= 45,
+      body: `Reminder 5 minutes before: ${formatDateKey(toKey(reminderTime))} ${formatTime(reminderTime.toTimeString().slice(0, 5))}`,
+      urgent: minutesUntil(reminderTime) <= 1,
     };
   });
 }
@@ -1088,7 +1508,16 @@ function updateInstallStatus(message) {
 }
 
 function getSyncPayload() {
-  const syncState = { ...state, photos: [] };
+  const syncState = {
+    ...state,
+    photos: [],
+    activeSessions: {},
+    sync: {
+      code: state.sync.code,
+      lastSync: state.sync.lastSync,
+      firebaseConfig: "",
+    },
+  };
   return makeJsonSafe({
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -1102,15 +1531,20 @@ function makeJsonSafe(value) {
 
 function applySyncedPayload(payload) {
   const localPhotos = state.photos;
+  const localSync = state.sync;
+  const localDeletedRecordIds = state.deletedRecordIds || [];
   const nextState = migrateState(payload.data || payload);
+  nextState.deletedRecordIds = Array.from(new Set([...(nextState.deletedRecordIds || []), ...localDeletedRecordIds]));
+  nextState.records = mergeRecords(nextState.records || {}, {}, nextState.deletedRecordIds);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, nextState);
   state.photos = localPhotos;
+  state.sync = { ...nextState.sync, ...localSync };
   state.sync.lastSync = new Date().toLocaleString();
   persist();
   hydrateMainProfile();
   hydrateProfileForm();
-  renderMain();
+  refreshCurrentView();
   renderReminderSections();
 }
 
@@ -1124,6 +1558,43 @@ function exportData() {
   link.remove();
   URL.revokeObjectURL(link.href);
   renderSyncStatus("Exported a backup file.");
+}
+
+function exportExcelData() {
+  const rows = [["Date", "Type", "Time", "Start", "End", "Duration minutes", "Amount", "Note"]];
+  Object.entries(state.records)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([date, records]) => {
+      records
+        .slice()
+        .sort((a, b) => a.time.localeCompare(b.time))
+        .forEach((record) => {
+          rows.push([
+            date,
+            typeConfig[record.type]?.label || record.type,
+            record.time || "",
+            record.startTime || "",
+            record.endTime || "",
+            getRecordDuration(record) || "",
+            record.amount || "",
+            record.note || "",
+          ]);
+        });
+    });
+  const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n");
+  const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `puppy-record-book-${state.sync.code || "records"}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  renderSyncStatus("Exported an Excel-readable CSV file.");
+}
+
+function escapeCsvCell(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
 
 function importData(event) {
@@ -1143,78 +1614,6 @@ function importData(event) {
     elements.importDataInput.value = "";
   };
   reader.readAsText(file);
-}
-
-async function pushCloudSync() {
-  if (!validateSyncSettings()) {
-    return;
-  }
-
-  renderSyncStatus("Pushing shared puppy book...");
-  try {
-    const response = await fetch(`${state.sync.url}/rest/v1/${syncTableName}?on_conflict=sync_code`, {
-      method: "POST",
-      headers: getSupabaseHeaders(),
-      body: JSON.stringify({ sync_code: state.sync.code, book_data: getSyncPayload(), updated_at: new Date().toISOString() }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Unable to push sync row");
-    }
-    state.sync.lastSync = new Date().toLocaleString();
-    persist();
-    renderSyncStatus(`Pushed to sync code "${state.sync.code}".`);
-  } catch {
-    renderSyncStatus("Cloud push failed. Check Supabase URL, anon key, table, and internet connection.");
-  }
-}
-
-async function pullCloudSync() {
-  if (!validateSyncSettings()) {
-    return;
-  }
-
-  renderSyncStatus("Pulling shared puppy book...");
-  try {
-    const response = await fetch(`${state.sync.url}/rest/v1/${syncTableName}?sync_code=eq.${encodeURIComponent(state.sync.code)}&select=book_data&limit=1`, {
-      headers: getSupabaseHeaders(),
-    });
-    if (!response.ok) {
-      throw new Error("Unable to pull sync row");
-    }
-    const rows = await response.json();
-    if (!rows.length) {
-      renderSyncStatus("No shared puppy book found for this sync code. Push first from one phone.");
-      return;
-    }
-    applySyncedPayload(rows[0].book_data);
-    renderSyncStatus(`Pulled shared puppy book "${state.sync.code}".`);
-  } catch {
-    renderSyncStatus("Cloud pull failed. Check Supabase URL, anon key, table, and internet connection.");
-  }
-}
-
-function validateSyncSettings() {
-  state.sync.code = elements.syncCode.value.trim();
-  state.sync.url = elements.syncUrl.value.trim().replace(/\/$/, "");
-  state.sync.key = elements.syncKey.value.trim();
-  persist();
-
-  if (!state.sync.code || !state.sync.url || !state.sync.key) {
-    renderSyncStatus("Add a sync code, Supabase URL, and Supabase anon key first.");
-    return false;
-  }
-
-  return true;
-}
-
-function getSupabaseHeaders() {
-  return {
-    apikey: state.sync.key,
-    Authorization: `Bearer ${state.sync.key}`,
-    "Content-Type": "application/json",
-    Prefer: "resolution=merge-duplicates,return=minimal",
-  };
 }
 
 function renderSyncStatus(message) {
@@ -1263,10 +1662,130 @@ async function pullFirebaseSync() {
   }
 }
 
+function scheduleAutoFirebaseSync() {
+  if (persistOptions.skipAutoSync || autoSyncInProgress || !hasFirebaseSettings()) {
+    return;
+  }
+  window.clearTimeout(autoSyncTimer);
+  autoSyncTimer = window.setTimeout(autoFirebaseSync, 1800);
+}
+
+async function autoFirebaseSync() {
+  if (!hasFirebaseSettings() || autoSyncInProgress) {
+    return;
+  }
+  autoSyncInProgress = true;
+  renderSyncStatus("Auto-syncing with Firebase...");
+  try {
+    const settings = validateFirebaseSettings();
+    if (!settings) {
+      return;
+    }
+    const services = await getFirebaseServices(settings);
+    const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    const snapshot = await services.getDoc(ref);
+    if (snapshot.exists()) {
+      mergeSyncedPayload(snapshot.data().bookData);
+    }
+    await services.setDoc(ref, {
+      bookData: getSyncPayload(),
+      updatedAt: new Date().toISOString(),
+    });
+    state.sync.lastSync = new Date().toLocaleString();
+    persist({ skipAutoSync: true });
+    renderSyncStatus(`Auto-synced Firebase at ${state.sync.lastSync}.`);
+  } catch (error) {
+    renderSyncStatus(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
+  } finally {
+    autoSyncInProgress = false;
+  }
+}
+
+function hasFirebaseSettings() {
+  return Boolean(state.sync.code && state.sync.code.length >= 12 && state.sync.firebaseConfig);
+}
+
+function mergeSyncedPayload(payload) {
+  const localPhotos = state.photos;
+  const localActiveSessions = state.activeSessions;
+  const local = makeJsonSafe(state);
+  const remote = migrateState(payload?.data || payload || {});
+  const merged = mergeStates(local, remote);
+  Object.keys(state).forEach((key) => delete state[key]);
+  Object.assign(state, merged);
+  state.photos = localPhotos;
+  state.activeSessions = localActiveSessions;
+  persist({ skipAutoSync: true });
+  hydrateMainProfile();
+  hydrateProfileForm();
+  refreshCurrentView();
+  renderReminderSections();
+}
+
+function refreshCurrentView() {
+  if (currentView === "day") {
+    renderDayView();
+    renderCalendar();
+    renderCategory();
+    return;
+  }
+  if (currentView === "profile") {
+    hydrateProfileForm();
+    renderReminderSections();
+    return;
+  }
+  if (currentView === "status") {
+    renderStatusView();
+    return;
+  }
+  renderMain();
+}
+
+function mergeStates(local, remote) {
+  const merged = migrateState({ ...remote, ...local, photos: local.photos });
+  const deletedRecordIds = Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
+  merged.owner = { ...remote.owner, ...local.owner };
+  merged.profile = { ...remote.profile, ...local.profile };
+  merged.school = { ...remote.school, ...local.school };
+  merged.schoolSchedule = { ...remote.schoolSchedule, ...local.schoolSchedule };
+  merged.foodTimes = { ...remote.foodTimes, ...local.foodTimes };
+  merged.foodSettings = {
+    ...remote.foodSettings,
+    ...local.foodSettings,
+    amounts: { ...remote.foodSettings?.amounts, ...local.foodSettings?.amounts },
+  };
+  merged.settings = { ...remote.settings, ...local.settings };
+  merged.vaccination = { ...remote.vaccination, ...local.vaccination };
+  merged.sync = { ...remote.sync, ...local.sync };
+  merged.deletedRecordIds = deletedRecordIds;
+  merged.records = mergeRecords(local.records || {}, remote.records || {}, deletedRecordIds);
+  merged.activeSessions = local.activeSessions || {};
+  return merged;
+}
+
+function mergeRecords(localRecords, remoteRecords, deletedRecordIds = []) {
+  const merged = {};
+  const deleted = new Set(deletedRecordIds);
+  [...Object.keys(remoteRecords), ...Object.keys(localRecords)].forEach((date) => {
+    const byId = new Map();
+    [...(remoteRecords[date] || []), ...(localRecords[date] || [])].forEach((record) => {
+      const id = record.id || createId();
+      if (!deleted.has(id)) {
+        byId.set(id, { ...record, id });
+      }
+    });
+    const records = Array.from(byId.values()).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    if (records.length) {
+      merged[date] = records;
+    }
+  });
+  return merged;
+}
+
 function validateFirebaseSettings() {
   state.sync.code = elements.syncCode.value.trim();
   state.sync.firebaseConfig = elements.firebaseConfig.value.trim();
-  persist();
+  persist({ skipAutoSync: true });
 
   if (!state.sync.code || !state.sync.firebaseConfig) {
     renderSyncStatus("Add a sync code and Firebase config JSON first.");
@@ -1285,7 +1804,7 @@ function validateFirebaseSettings() {
     }
     state.sync.firebaseConfig = JSON.stringify(config, null, 2);
     elements.firebaseConfig.value = state.sync.firebaseConfig;
-    persist();
+    persist({ skipAutoSync: true });
     return config;
   } catch {
     renderSyncStatus("Firebase config must include projectId. Paste the full firebaseConfig block from Project settings > General > SDK setup.");
@@ -1408,6 +1927,54 @@ function createId() {
 function updateAmountField() {
   elements.amountField.childNodes[0].nodeValue = `${typeConfig[activeType].amount} `;
   elements.recordAmount.placeholder = typeConfig[activeType].placeholder;
+  syncDurationVisibility();
+  if (timedRecordTypes.includes(activeType)) {
+    elements.recordStartTime.value = elements.recordStartTime.value || elements.recordTime.value || new Date().toTimeString().slice(0, 5);
+  }
+}
+
+function syncDurationVisibility() {
+  const isTimed = timedRecordTypes.includes(activeType);
+  elements.durationFields.hidden = !isTimed;
+  if (isTimed) {
+    elements.recordStartTime.value = elements.recordStartTime.value || elements.recordTime.value || new Date().toTimeString().slice(0, 5);
+  }
+}
+
+function syncDurationFromEnd() {
+  if (!timedRecordTypes.includes(activeType)) {
+    return;
+  }
+  const startTime = elements.recordStartTime.value || elements.recordTime.value;
+  const endTime = elements.recordEndTime.value;
+  if (startTime && endTime) {
+    elements.recordDuration.value = durationFromTimes(startTime, endTime);
+  }
+  elements.recordTime.value = startTime || elements.recordTime.value;
+  updateDurationAmountField();
+}
+
+function syncEndFromDuration() {
+  if (!timedRecordTypes.includes(activeType)) {
+    return;
+  }
+  const startTime = elements.recordStartTime.value || elements.recordTime.value;
+  const duration = Number(elements.recordDuration.value);
+  if (startTime && duration > 0) {
+    elements.recordEndTime.value = addMinutesToTime(startTime, duration);
+  }
+  elements.recordTime.value = startTime || elements.recordTime.value;
+  updateDurationAmountField();
+}
+
+function updateDurationAmountField() {
+  if (!timedRecordTypes.includes(activeType)) {
+    return;
+  }
+  const duration = Number(elements.recordDuration.value);
+  if (duration > 0) {
+    elements.recordAmount.value = `${Math.round(duration)} min`;
+  }
 }
 
 function getWeightRecords() {
@@ -1415,7 +1982,7 @@ function getWeightRecords() {
     .flatMap(([date, records]) =>
       records
         .filter((record) => record.type === "weight")
-        .map((record) => ({ date, value: parseWeight(record.amount) }))
+        .map((record) => ({ date, id: record.id, value: parseWeight(record.amount) }))
     )
     .filter((record) => Number.isFinite(record.value))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -1467,8 +2034,9 @@ function loadState() {
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
     foodSettings: { type: "Puppy food", amounts: { morning: "110g", afternoon: "", evening: "120g" } },
-    sync: { code: "", url: "", key: "", firebaseConfig: "", lastSync: "" },
+    sync: { code: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
+    deletedRecordIds: [],
     vaccination: { rabiesDate: "", rabiesValidUntil: "" },
     settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
     photos: [],
@@ -1542,12 +2110,11 @@ function migrateState(value) {
     },
     sync: {
       code: value.sync?.code || "",
-      url: value.sync?.url || "",
-      key: value.sync?.key || "",
       firebaseConfig: value.sync?.firebaseConfig || "",
       lastSync: value.sync?.lastSync || "",
     },
     activeSessions: value.activeSessions || {},
+    deletedRecordIds: Array.isArray(value.deletedRecordIds) ? value.deletedRecordIds : [],
     vaccination: {
       rabiesDate: value.vaccination?.rabiesDate || "",
       rabiesValidUntil: value.vaccination?.rabiesValidUntil || "",
@@ -1563,8 +2130,11 @@ function migrateState(value) {
   };
 }
 
-function persist() {
+function persist(options = {}) {
+  persistOptions = options;
   localStorage.setItem(storageKey, JSON.stringify(state));
+  scheduleAutoFirebaseSync();
+  persistOptions = {};
 }
 
 function fileToDataUrl(file) {

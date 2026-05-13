@@ -23,9 +23,14 @@
               <p class="eyebrow">Puppy Record Book</p>
               <h1 id="currentMonth">Calendar</h1>
             </div>
-            <button class="icon-button" id="profileButton" type="button" aria-label="Open default information" title="Default information">
-              <span aria-hidden="true">T</span>
-            </button>
+            <div class="top-actions">
+              <button class="icon-button" id="statusButton" type="button" aria-label="Open status dashboard" title="Status">
+                <span aria-hidden="true">#</span>
+              </button>
+              <button class="icon-button" id="profileButton" type="button" aria-label="Open settings" title="Settings">
+                <span aria-hidden="true">&#9881;</span>
+              </button>
+            </div>
           </header>
 
           <section class="puppy-panel" aria-label="Puppy profile and growth insight">
@@ -64,8 +69,10 @@
               <button type="button" class="quick-log-button timed" data-action="sleep">Sleep</button>
               <button type="button" class="quick-log-button timed" data-action="train">Train</button>
               <button type="button" class="quick-log-button food" data-action="food">Food</button>
+              <button type="button" class="quick-log-button water" data-action="water">Water</button>
+              <button type="button" class="quick-log-button timed" data-action="box">Box</button>
             </div>
-            <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk, play, sleep, and train use start/stop.</p>
+            <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk, play, sleep, train, and box use start/stop.</p>
           </section>
 
           <nav class="month-controls" aria-label="Calendar navigation">
@@ -88,13 +95,16 @@
             <div class="category-tabs" role="tablist" aria-label="Record categories">
               <button type="button" class="category-tab selected" data-category="walk">Walk</button>
               <button type="button" class="category-tab" data-category="food">Food</button>
+              <button type="button" class="category-tab" data-category="water">Water</button>
               <button type="button" class="category-tab" data-category="potty">Pee & Poop</button>
               <button type="button" class="category-tab" data-category="activity">Play & Train</button>
               <button type="button" class="category-tab" data-category="weight">Weight</button>
               <button type="button" class="category-tab" data-category="sleep">Sleep</button>
+              <button type="button" class="category-tab" data-category="box">Box</button>
               <button type="button" class="category-tab" data-category="vaccine">Vaccine</button>
               <button type="button" class="category-tab" data-category="school">School</button>
             </div>
+            <div id="categorySummary" class="category-summary"></div>
             <div id="categoryList" class="category-list"></div>
           </section>
         </div>
@@ -122,6 +132,7 @@
               <div class="type-grid" role="radiogroup" aria-label="Record type">
                 <button type="button" class="type-button selected" data-type="walk">Walk</button>
                 <button type="button" class="type-button" data-type="food">Food</button>
+                <button type="button" class="type-button" data-type="water">Water</button>
                 <button type="button" class="type-button" data-type="poop">Poop</button>
                 <button type="button" class="type-button" data-type="pee">Pee</button>
                 <button type="button" class="type-button" data-type="weight">Weight</button>
@@ -129,6 +140,7 @@
                 <button type="button" class="type-button" data-type="play">Play</button>
                 <button type="button" class="type-button" data-type="sleep">Sleep</button>
                 <button type="button" class="type-button" data-type="train">Train</button>
+                <button type="button" class="type-button" data-type="box">Box</button>
                 <button type="button" class="type-button" data-type="school">Hundeschule</button>
               </div>
               <div class="form-row">
@@ -139,6 +151,20 @@
                 <label id="amountField">
                   Amount
                   <input id="recordAmount" placeholder="e.g. 120g" />
+                </label>
+              </div>
+              <div id="durationFields" class="duration-panel" hidden>
+                <label>
+                  Start
+                  <input id="recordStartTime" type="time" />
+                </label>
+                <label>
+                  End
+                  <input id="recordEndTime" type="time" />
+                </label>
+                <label>
+                  Duration min
+                  <input id="recordDuration" type="number" min="1" step="1" inputmode="numeric" />
                 </label>
               </div>
               <label>
@@ -160,6 +186,39 @@
             <div id="recordList" class="record-list"></div>
           </section>
 
+        </div>
+
+        <div id="statusView" class="view" hidden>
+          <header class="top-bar">
+            <button class="icon-button" id="backFromStatus" type="button" aria-label="Back to main page" title="Back">
+              <span aria-hidden="true">&lt;</span>
+            </button>
+            <div class="day-title">
+              <p class="eyebrow">Status</p>
+              <h1>Overview</h1>
+            </div>
+            <button class="icon-button" id="statusSettingsButton" type="button" aria-label="Open settings" title="Settings">
+              <span aria-hidden="true">&#9881;</span>
+            </button>
+          </header>
+
+          <section class="status-panel" aria-label="Annual puppy status">
+            <div class="section-title">
+              <h2>Annual Average</h2>
+              <label class="compact-select">
+                Year
+                <select id="statusYearSelect"></select>
+              </label>
+            </div>
+            <div id="annualStats" class="stats-grid"></div>
+          </section>
+
+          <section class="status-panel" aria-label="Monthly puppy status">
+            <div class="section-title">
+              <h2>Monthly Average</h2>
+            </div>
+            <div id="monthlyStats" class="monthly-stats"></div>
+          </section>
         </div>
 
         <div id="profileView" class="view" hidden>
@@ -313,28 +372,19 @@
                 <input id="syncCode" maxlength="40" placeholder="e.g. leo-family-2026" />
               </label>
               <label>
-                Supabase URL
-                <input id="syncUrl" placeholder="https://your-project.supabase.co" />
-              </label>
-              <label>
-                Supabase anon key
-                <input id="syncKey" placeholder="Public anon key" />
-              </label>
-              <label>
                 Firebase config JSON
                 <textarea id="firebaseConfig" placeholder='{"apiKey":"...","projectId":"...","appId":"..."}'></textarea>
               </label>
             </div>
             <div class="sync-actions">
-              <button id="pushSyncButton" class="primary-button" type="button">Push</button>
-              <button id="pullSyncButton" class="quiet-button" type="button">Pull</button>
               <button id="pushFirebaseButton" class="primary-button" type="button">Push Firebase</button>
               <button id="pullFirebaseButton" class="quiet-button" type="button">Pull Firebase</button>
               <button id="exportDataButton" class="quiet-button" type="button">Export</button>
+              <button id="exportExcelButton" class="quiet-button" type="button">Excel</button>
               <label class="small-photo-button" for="importDataInput">Import</label>
               <input id="importDataInput" type="file" accept="application/json" />
             </div>
-            <p id="syncStatus" class="legal-note">Use the same sync code on each phone. Push uploads this puppy book; Pull downloads the shared copy.</p>
+            <p id="syncStatus" class="legal-note">Use the same sync code and Firebase config on each phone. Auto-sync runs after edits.</p>
           </section>
 
           <section class="info-panel" aria-label="German rabies vaccination reminders">
