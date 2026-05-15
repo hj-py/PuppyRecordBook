@@ -35,10 +35,13 @@ let deferredInstallPrompt = null;
 let currentView = "main";
 let touchStartX = 0;
 let touchStartY = 0;
+let touchStartScrollY = 0;
 let editingRecordId = null;
 let firebaseServices = null;
 let autoSyncTimer = null;
 let firebasePollTimer = null;
+let firebaseRetryTimer = null;
+let firebaseRetryCount = 0;
 let activeTimerInterval = null;
 let autoSyncInProgress = false;
 let firebasePollInProgress = false;
@@ -51,6 +54,7 @@ let homeBookmarkMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedBookmarkYear = today.getFullYear();
 
 const elements = {
+  appToast: document.querySelector("#appToast"),
   mainView: document.querySelector("#mainView"),
   dayView: document.querySelector("#dayView"),
   calendarView: document.querySelector("#calendarView"),
@@ -71,6 +75,9 @@ const elements = {
   calendarPageGrid: document.querySelector("#calendarPageGrid"),
   calendarSelectedDateLabel: document.querySelector("#calendarSelectedDateLabel"),
   calendarDaySummary: document.querySelector("#calendarDaySummary"),
+  calendarBookmarkDay: document.querySelector("#calendarBookmarkDay"),
+  calendarBookmarkNoteField: document.querySelector("#calendarBookmarkNoteField"),
+  calendarBookmarkNote: document.querySelector("#calendarBookmarkNote"),
   calendarRecordCount: document.querySelector("#calendarRecordCount"),
   calendarRecordList: document.querySelector("#calendarRecordList"),
   openSelectedDayEditor: document.querySelector("#openSelectedDayEditor"),
@@ -100,6 +107,8 @@ const elements = {
   selectedDateLabel: document.querySelector("#selectedDateLabel"),
   dayDateInput: document.querySelector("#dayDateInput"),
   bookmarkDay: document.querySelector("#bookmarkDay"),
+  bookmarkNoteField: document.querySelector("#bookmarkNoteField"),
+  bookmarkNote: document.querySelector("#bookmarkNote"),
   recordTime: document.querySelector("#recordTime"),
   recordStartTime: document.querySelector("#recordStartTime"),
   recordEndTime: document.querySelector("#recordEndTime"),
@@ -150,6 +159,7 @@ const elements = {
   schoolReminderList: document.querySelector("#schoolReminderList"),
   enableFoodAlarm: document.querySelector("#enableFoodAlarm"),
   foodType: document.querySelector("#foodType"),
+  foodReminderMinutes: document.querySelector("#foodReminderMinutes"),
   foodTimeMorning: document.querySelector("#foodTimeMorning"),
   foodTimeAfternoon: document.querySelector("#foodTimeAfternoon"),
   foodTimeEvening: document.querySelector("#foodTimeEvening"),
@@ -303,6 +313,11 @@ function bindEvents() {
   });
 
   elements.bookmarkDay.addEventListener("click", toggleSelectedDateBookmark);
+  elements.calendarBookmarkDay.addEventListener("click", toggleSelectedDateBookmark);
+  elements.bookmarkNote.addEventListener("input", () => updateSelectedBookmarkNote(elements.bookmarkNote.value, elements.bookmarkNote));
+  elements.calendarBookmarkNote.addEventListener("input", () =>
+    updateSelectedBookmarkNote(elements.calendarBookmarkNote.value, elements.calendarBookmarkNote)
+  );
   elements.saveRecord.addEventListener("click", saveRecord);
   elements.cancelEditRecord.addEventListener("click", clearEditMode);
   const syncStartFromMainTime = () => {
@@ -455,17 +470,9 @@ function renderDayView() {
 }
 
 function showDayView(dateKey) {
-  currentView = "day";
-  selectedDate = dateKey;
-  const date = parseDateKey(dateKey);
-  visibleMonth = new Date(date.getFullYear(), date.getMonth(), 1);
-  elements.mainView.hidden = true;
-  elements.dayView.hidden = false;
-  elements.calendarView.hidden = true;
-  elements.bookmarksView.hidden = true;
-  elements.profileView.hidden = true;
-  elements.statusView.hidden = true;
-  renderDayView();
+  showCalendarView(dateKey);
+  elements.calendarInlineEditor.hidden = false;
+  hydrateCalendarEditor();
 }
 
 function showMainView() {
@@ -588,6 +595,7 @@ function renderCalendarSelectedRecords() {
   elements.calendarRecordCount.textContent = records.length;
   elements.calendarDaySummary.innerHTML = renderSelectedDayTotalSummary(selectedDate);
   elements.calendarEditorDate.value = selectedDate;
+  renderBookmarkButton();
   elements.calendarRecordList.innerHTML = "";
 
   if (!records.length) {
@@ -694,6 +702,7 @@ function buildCalendarRecordFromForm(id) {
     record.endTime = endTime;
     record.durationMinutes = durationMinutes;
     record.amount = `${durationMinutes} min`;
+    record.note = "";
   }
 
   return record;
@@ -839,6 +848,8 @@ function renderBookmarksView() {
 
   bookmarkedDates.forEach((dateKey) => {
     const records = state.records[dateKey] || [];
+    const bookmarkNote = getBookmarkNote(dateKey);
+    const meta = bookmarkNote ? `${records.length} records - ${bookmarkNote}` : `${records.length} records`;
     const item = document.createElement("article");
     item.className = "bookmark-item";
     item.innerHTML = `
@@ -846,7 +857,7 @@ function renderBookmarksView() {
         <span class="bookmark-star" aria-hidden="true">★</span>
         <span>
           <strong>${escapeHtml(formatDateKey(dateKey))}</strong>
-          <small>${records.length} records</small>
+          <small>${escapeHtml(meta)}</small>
         </span>
       </button>
       <button class="quiet-button bookmark-edit" type="button">Edit</button>
@@ -874,13 +885,15 @@ function renderHomeBookmarkSummary() {
 
   bookmarkedDates.forEach((dateKey) => {
     const records = state.records[dateKey] || [];
+    const bookmarkNote = getBookmarkNote(dateKey);
+    const meta = bookmarkNote ? `${records.length} records - ${bookmarkNote}` : `${records.length} records`;
     const item = document.createElement("button");
     item.className = "home-bookmark-item";
     item.type = "button";
     item.innerHTML = `
       <span aria-hidden="true">★</span>
       <strong>${escapeHtml(formatDateKey(dateKey))}</strong>
-      <small>${records.length} records</small>
+      <small>${escapeHtml(meta)}</small>
     `;
     item.addEventListener("click", () => showCalendarView(dateKey));
     elements.homeBookmarkSummary.appendChild(item);
@@ -925,13 +938,14 @@ function getAvailableBookmarkYears() {
 
 function createRecordListItem(record, dateKey) {
   const config = typeConfig[record.type] || typeConfig.note;
+  const meta = getRecordListMeta(record);
   const item = document.createElement("article");
   item.className = "record-item";
   item.innerHTML = `
     <span class="record-icon" style="background:${config.color}">${config.icon}</span>
     <div>
       <p class="record-title">${config.label} - ${escapeHtml(formatTime(record.time))}</p>
-      <p class="record-meta">${escapeHtml([record.amount, record.note].filter(Boolean).join(" - "))}</p>
+      ${meta ? `<p class="record-meta">${escapeHtml(meta)}</p>` : ""}
     </div>
     <button class="delete-button" type="button" aria-label="Delete record">x</button>
   `;
@@ -941,17 +955,36 @@ function createRecordListItem(record, dateKey) {
   return item;
 }
 
+function getRecordListMeta(record) {
+  if (timedRecordTypes.includes(record.type)) {
+    return [formatDurationHoursMinutes(getRecordDuration(record)), formatTimeRange(record)].filter(Boolean).join(" - ");
+  }
+  return [record.amount, record.note].filter(Boolean).join(" - ");
+}
+
+function formatTimeRange(record) {
+  const start = record.startTime || record.time;
+  const end = record.endTime;
+  return [start ? formatTime(start) : "", end ? formatTime(end) : ""].filter(Boolean).join(" - ");
+}
+
 function renderBookmarkButton() {
   const bookmarked = isDateBookmarked(selectedDate);
+  const note = getBookmarkNote(selectedDate);
   elements.bookmarkDay.classList.toggle("active", bookmarked);
   elements.bookmarkDay.setAttribute("aria-pressed", String(bookmarked));
   elements.bookmarkDay.textContent = bookmarked ? "Starred" : "Star";
+  elements.calendarBookmarkDay.classList.toggle("active", bookmarked);
+  elements.calendarBookmarkDay.setAttribute("aria-pressed", String(bookmarked));
+  elements.calendarBookmarkDay.textContent = bookmarked ? "Starred" : "Star";
+  renderBookmarkNoteFields(bookmarked, note);
 }
 
 function toggleSelectedDateBookmark() {
   const current = state.bookmarks[selectedDate];
   state.bookmarks[selectedDate] = {
     bookmarked: !current?.bookmarked,
+    note: current?.note || "",
     updatedAt: new Date().toISOString(),
   };
   persist();
@@ -967,6 +1000,41 @@ function toggleSelectedDateBookmark() {
 
 function isDateBookmarked(dateKey) {
   return Boolean(state.bookmarks?.[dateKey]?.bookmarked);
+}
+
+function getBookmarkNote(dateKey) {
+  return state.bookmarks?.[dateKey]?.note || "";
+}
+
+function renderBookmarkNoteFields(bookmarked, note) {
+  [elements.bookmarkNoteField, elements.calendarBookmarkNoteField].forEach((field) => {
+    field.hidden = !bookmarked;
+  });
+  elements.bookmarkNote.value = note;
+  elements.calendarBookmarkNote.value = note;
+}
+
+function updateSelectedBookmarkNote(value, sourceInput) {
+  const current = state.bookmarks[selectedDate];
+  if (!current?.bookmarked) {
+    return;
+  }
+  state.bookmarks[selectedDate] = {
+    ...current,
+    bookmarked: true,
+    note: value,
+    updatedAt: new Date().toISOString(),
+  };
+  [elements.bookmarkNote, elements.calendarBookmarkNote].forEach((input) => {
+    if (input !== sourceInput) {
+      input.value = value;
+    }
+  });
+  persist();
+  renderHomeBookmarkSummary();
+  if (currentView === "bookmarks") {
+    renderBookmarksView();
+  }
 }
 
 function renderRecords() {
@@ -1081,7 +1149,7 @@ function handleQuickLog(type) {
     return;
   }
 
-  addQuickRecord(type, "", "Quick log");
+  addQuickRecord(type, "", "");
 }
 
 function addQuickRecord(type, amount, note, time = new Date()) {
@@ -1105,7 +1173,7 @@ function addQuickRecord(type, amount, note, time = new Date()) {
   visibleMonth = new Date(time.getFullYear(), time.getMonth(), 1);
   persist();
   renderMain();
-  elements.quickLogStatus.textContent = `${typeConfig[type].label} saved for ${formatTime(record.time)}.`;
+  elements.quickLogStatus.textContent = `${typeConfig[type].label} saved.`;
 }
 
 function toggleTimedQuickLog(type) {
@@ -1122,11 +1190,10 @@ function toggleTimedQuickLog(type) {
   const start = new Date(existing.start);
   const minutes = Math.max(1, Math.round((now - start) / 60000));
   const amount = `${minutes} min`;
-  const note = `${formatTime(start.toTimeString().slice(0, 5))} - ${formatTime(now.toTimeString().slice(0, 5))}`;
   state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), existing.id]));
   delete state.activeSessions[type];
   renderQuickLogButtons();
-  addQuickRecord(type, amount, note, start);
+  addQuickRecord(type, amount, "", start);
   elements.quickLogStatus.textContent = `${typeConfig[type].label} ended. ${amount} saved.`;
 }
 
@@ -1222,12 +1289,22 @@ function getRecordDuration(record) {
 
 function formatDuration(minutes) {
   const total = Math.round(minutes || 0);
-  if (total < 60) {
-    return `${total} min`;
-  }
+  return formatDurationHoursMinutes(total);
+}
+
+function formatDurationClock(minutes) {
+  const totalSeconds = Math.max(0, Math.round((minutes || 0) * 60));
+  const hours = Math.floor(totalSeconds / 3600);
+  const mins = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours}:${String(mins).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatDurationHoursMinutes(minutes) {
+  const total = Math.max(0, Math.round(minutes || 0));
   const hours = Math.floor(total / 60);
   const mins = total % 60;
-  return mins ? `${hours} hr ${mins} min` : `${hours} hr`;
+  return `${String(hours).padStart(2, "0")}hr ${String(mins).padStart(2, "0")}min`;
 }
 
 function renderCategory() {
@@ -1254,7 +1331,7 @@ function renderCategory() {
     item.className = "category-item";
     const detail = getCategoryDetail(entry, activeCategory);
     item.innerHTML = `
-      <div class="category-date">${escapeHtml(formatShortDate(entry.date))}<br>${escapeHtml(formatTime(entry.time))}</div>
+      <div class="category-date">${escapeHtml(getCategoryTimeLabel(entry))}</div>
       <div>
         <p class="category-detail">${escapeHtml(detail.primary)}</p>
         ${detail.secondary ? `<p class="category-subtext">${escapeHtml(detail.secondary)}</p>` : ""}
@@ -1271,11 +1348,18 @@ function renderCategory() {
 }
 
 function openCategoryRecord(entry) {
-  showDayView(entry.date);
+  showCalendarView(entry.date);
   const record = (state.records[entry.date] || []).find((item) => item.id === entry.id);
   if (record) {
-    startEditRecord(record);
+    startCalendarEditRecord(record);
   }
+}
+
+function getCategoryTimeLabel(record) {
+  if (timedRecordTypes.includes(record.type)) {
+    return formatTimeRange(record) || formatTime(record.time);
+  }
+  return formatTime(record.time);
 }
 
 function renderGrowthCategory() {
@@ -1319,8 +1403,8 @@ function renderGrowthCategory() {
       const id = item.dataset.recordId;
       const record = (state.records[date] || []).find((entry) => entry.id === id);
       if (record) {
-        showDayView(date);
-        startEditRecord(record);
+        showCalendarView(date);
+        startCalendarEditRecord(record);
       }
     });
   });
@@ -1408,6 +1492,7 @@ function buildRecordFromForm(id) {
     record.endTime = endTime;
     record.durationMinutes = durationMinutes;
     record.amount = `${durationMinutes} min`;
+    record.note = "";
   }
 
   return record;
@@ -1550,15 +1635,15 @@ function getCategoryDetail(entry, activeCategoryType = "") {
 
   if (entry.type === "walk") {
     return {
-      primary: [entry.amount || "Walk", entry.note].filter(Boolean).join(" - "),
-      secondary: [formatTime(entry.startTime || entry.time), entry.endTime ? formatTime(entry.endTime) : "Today walk record"].filter(Boolean).join(" - "),
+      primary: formatDurationHoursMinutes(getRecordDuration(entry)),
+      secondary: formatTimeRange(entry),
     };
   }
 
   if (timedRecordTypes.includes(entry.type)) {
     return {
-      primary: [entry.amount || "Duration", typeLabel].filter(Boolean).join(" - "),
-      secondary: [formatTime(entry.startTime || entry.time), entry.endTime ? formatTime(entry.endTime) : "", entry.note].filter(Boolean).join(" - "),
+      primary: `${formatDurationHoursMinutes(getRecordDuration(entry))} - ${typeLabel}`,
+      secondary: formatTimeRange(entry),
     };
   }
 
@@ -1868,6 +1953,7 @@ function hydrateProfileForm() {
   elements.enableSchoolAlarm.textContent = state.settings.schoolAlarmEnabled ? "On" : "Enable";
   elements.enableFoodAlarm.textContent = state.settings.foodAlarmEnabled ? "On" : "Enable";
   elements.foodType.value = state.foodSettings.type;
+  elements.foodReminderMinutes.value = state.foodSettings.reminderMinutes;
   elements.foodTimeMorning.value = state.foodTimes.morning;
   elements.foodTimeAfternoon.value = state.foodTimes.afternoon;
   elements.foodTimeEvening.value = state.foodTimes.evening;
@@ -1900,6 +1986,7 @@ function syncProfileFromForm() {
   state.foodTimes.afternoon = elements.foodTimeAfternoon.value;
   state.foodTimes.evening = elements.foodTimeEvening.value;
   state.foodSettings.type = elements.foodType.value.trim();
+  state.foodSettings.reminderMinutes = Math.max(0, Math.min(180, Number(elements.foodReminderMinutes.value) || 0));
   state.foodSettings.amounts.morning = elements.foodAmountMorning.value.trim();
   state.foodSettings.amounts.afternoon = elements.foodAmountAfternoon.value.trim();
   state.foodSettings.amounts.evening = elements.foodAmountEvening.value.trim();
@@ -1924,6 +2011,7 @@ function getProfileInputs() {
     elements.rabiesDate,
     elements.rabiesValidUntil,
     elements.foodType,
+    elements.foodReminderMinutes,
     elements.foodTimeMorning,
     elements.foodTimeAfternoon,
     elements.foodTimeEvening,
@@ -2040,6 +2128,7 @@ function getSchoolReminders() {
 }
 
 function getFoodReminders() {
+  const reminderMinutes = getFoodReminderMinutes();
   const times = [
     ["Morning food", state.foodTimes.morning],
     ["Afternoon food", state.foodTimes.afternoon],
@@ -2052,13 +2141,19 @@ function getFoodReminders() {
 
   return times.map(([label, time]) => {
     const nextMeal = getNextDailyOccurrence(time);
-    const reminderTime = new Date(nextMeal.getTime() - 5 * 60000);
+    const reminderTime = new Date(nextMeal.getTime() - reminderMinutes * 60000);
+    const reminderText = reminderMinutes ? `${reminderMinutes} minutes before` : "At food time";
     return {
       title: `${label}: ${formatTime(time)}`,
-      body: `Reminder 5 minutes before: ${formatDateKey(toKey(reminderTime))} ${formatTime(reminderTime.toTimeString().slice(0, 5))}`,
+      body: `Reminder ${reminderText}: ${formatDateKey(toKey(reminderTime))} ${formatTime(reminderTime.toTimeString().slice(0, 5))}`,
       urgent: minutesUntil(reminderTime) <= 1,
     };
   });
+}
+
+function getFoodReminderMinutes() {
+  const minutes = Number(state.foodSettings.reminderMinutes);
+  return Number.isFinite(minutes) ? Math.max(0, Math.min(180, Math.round(minutes))) : 5;
 }
 
 function maybeRequestNotificationPermission() {
@@ -2409,6 +2504,15 @@ function renderSyncStatus(message) {
   elements.syncStatus.textContent = message;
 }
 
+function showToast(message, duration = 3200) {
+  elements.appToast.textContent = message;
+  elements.appToast.hidden = false;
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => {
+    elements.appToast.hidden = true;
+  }, duration);
+}
+
 async function pushFirebaseSync() {
   const settings = validateFirebaseSettings();
   if (!settings) {
@@ -2424,9 +2528,10 @@ async function pushFirebaseSync() {
     });
     state.sync.lastSync = new Date().toLocaleString();
     persist();
+    clearFirebaseRetry();
     renderSyncStatus(`Pushed to Firebase sync code "${state.sync.code}".`);
   } catch (error) {
-    renderSyncStatus(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
+    queueFirebaseRetry(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
   }
 }
 
@@ -2482,12 +2587,37 @@ async function autoFirebaseSync() {
     });
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
+    clearFirebaseRetry();
     renderSyncStatus(`Auto-synced Firebase at ${state.sync.lastSync}.`);
   } catch (error) {
-    renderSyncStatus(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
+    queueFirebaseRetry(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
   } finally {
     autoSyncInProgress = false;
   }
+}
+
+function queueFirebaseRetry(message) {
+  if (!hasFirebaseSettings()) {
+    renderSyncStatus(`${message} Add sync settings, then try again.`);
+    showToast(`${message}. Add sync settings, then try again.`, 9000);
+    return;
+  }
+  firebaseRetryCount += 1;
+  const delay = Math.min(60000, 5000 * firebaseRetryCount);
+  const retryMessage = `${message}. Retrying automatically in ${Math.round(delay / 1000)} sec.`;
+  renderSyncStatus(retryMessage);
+  showToast(retryMessage, 9000);
+  window.clearTimeout(firebaseRetryTimer);
+  firebaseRetryTimer = window.setTimeout(() => {
+    renderSyncStatus(`Retrying Firebase push (${firebaseRetryCount})...`);
+    autoFirebaseSync();
+  }, delay);
+}
+
+function clearFirebaseRetry() {
+  firebaseRetryCount = 0;
+  window.clearTimeout(firebaseRetryTimer);
+  firebaseRetryTimer = null;
 }
 
 function hasFirebaseSettings() {
@@ -2594,6 +2724,9 @@ function mergeStates(local, remote) {
   merged.foodSettings = {
     ...remote.foodSettings,
     ...local.foodSettings,
+    reminderMinutes: Number.isFinite(Number(local.foodSettings?.reminderMinutes))
+      ? Number(local.foodSettings.reminderMinutes)
+      : Number(remote.foodSettings?.reminderMinutes) || 5,
     amounts: { ...remote.foodSettings?.amounts, ...local.foodSettings?.amounts },
   };
   merged.settings = { ...remote.settings, ...local.settings };
@@ -2631,10 +2764,11 @@ function normalizeBookmark(value) {
     return null;
   }
   if (typeof value === "boolean") {
-    return { bookmarked: value, updatedAt: "" };
+    return { bookmarked: value, note: "", updatedAt: "" };
   }
   return {
     bookmarked: Boolean(value.bookmarked),
+    note: typeof value.note === "string" ? value.note : "",
     updatedAt: value.updatedAt || "",
   };
 }
@@ -2810,22 +2944,48 @@ function handleTouchStart(event) {
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;
+  touchStartScrollY = window.scrollY || document.documentElement.scrollTop || 0;
 }
 
 function handleTouchEnd(event) {
-  if (currentView === "main" || isEditableElement(event.target)) {
+  if (isEditableElement(event.target)) {
     return;
   }
 
   const touch = event.changedTouches[0];
   const deltaX = touch.clientX - touchStartX;
-  const deltaY = Math.abs(touch.clientY - touchStartY);
+  const rawDeltaY = touch.clientY - touchStartY;
+  const deltaY = Math.abs(rawDeltaY);
+  const pullDown = touchStartScrollY <= 4 && rawDeltaY > 95 && Math.abs(deltaX) < 70;
+
+  if (pullDown) {
+    refreshFromPullGesture();
+    return;
+  }
+
+  if (currentView === "main") {
+    return;
+  }
+
   const edgeSwipe = touchStartX <= 48 && deltaX > 80 && deltaY < 55;
   const broadSwipe = deltaX > 130 && deltaY < 45;
 
   if (edgeSwipe || broadSwipe) {
     showMainView();
   }
+}
+
+async function refreshFromPullGesture() {
+  if (!hasFirebaseSettings()) {
+    refreshCurrentView();
+    showToast("Refreshed this phone. Add Firebase sync settings to pull shared data.");
+    return;
+  }
+
+  showToast("Pulling latest puppy book...");
+  await pullFirebaseSync();
+  refreshCurrentView();
+  showToast("Refresh complete.");
 }
 
 function isEditableElement(target) {
@@ -2962,7 +3122,7 @@ function loadState() {
     school: { name: "", trainer: "", contact: "", notes: "" },
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
-    foodSettings: { type: "Puppy food", amounts: { morning: "110g", afternoon: "", evening: "120g" } },
+    foodSettings: { type: "Puppy food", reminderMinutes: 5, amounts: { morning: "110g", afternoon: "", evening: "120g" } },
     sync: { code: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
     stoppedSessionIds: [],
@@ -3033,6 +3193,7 @@ function migrateState(value) {
     },
     foodSettings: {
       type: value.foodSettings?.type || "",
+      reminderMinutes: Number.isFinite(Number(value.foodSettings?.reminderMinutes)) ? Number(value.foodSettings.reminderMinutes) : 5,
       amounts: {
         morning: value.foodSettings?.amounts?.morning || "",
         afternoon: value.foodSettings?.amounts?.afternoon || "",

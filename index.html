@@ -19,6 +19,7 @@
   <body>
     <main class="phone-shell" aria-label="Puppy Record Book app">
       <section class="app-screen">
+        <div id="appToast" class="app-toast" hidden></div>
         <div id="mainView" class="view">
           <header class="top-bar">
             <div class="day-title">
@@ -146,6 +147,10 @@
               <h2>Add data</h2>
               <button id="bookmarkDay" class="quiet-button bookmark-button" type="button" aria-pressed="false">Star</button>
             </div>
+            <label id="bookmarkNoteField" class="bookmark-note-field" hidden>
+              Why this day is bookmarked
+              <input id="bookmarkNote" maxlength="120" placeholder="e.g. First long walk, vet note, special memory..." />
+            </label>
             <div class="quick-form" id="quickForm">
               <label>
                 Date
@@ -246,8 +251,15 @@
           <section class="day-panel" aria-label="Calendar selected day records">
             <div class="section-title">
               <h2 id="calendarSelectedDateLabel">Records</h2>
-              <span id="calendarRecordCount">0</span>
+              <div class="section-actions">
+                <button id="calendarBookmarkDay" class="quiet-button bookmark-button" type="button" aria-pressed="false">Star</button>
+                <span id="calendarRecordCount">0</span>
+              </div>
             </div>
+            <label id="calendarBookmarkNoteField" class="bookmark-note-field" hidden>
+              Why this day is bookmarked
+              <input id="calendarBookmarkNote" maxlength="120" placeholder="e.g. First long walk, vet note, special memory..." />
+            </label>
             <div id="calendarDaySummary" class="day-total-summary"></div>
             <button id="openSelectedDayEditor" class="primary-button wide-button" type="button">Add or edit data</button>
             <div id="calendarInlineEditor" class="quick-form calendar-inline-editor" hidden>
@@ -488,6 +500,10 @@
               <label>
                 Current food type
                 <input id="foodType" maxlength="80" placeholder="e.g. puppy kibble, wet food" />
+              </label>
+              <label>
+                Remind before food
+                <input id="foodReminderMinutes" type="number" min="0" max="180" step="1" inputmode="numeric" placeholder="e.g. 5" />
               </label>
               <label>
                 Morning
