@@ -7,7 +7,7 @@ const typeConfig = {
   poop: { label: "Poop", icon: "P", color: "#7b5f45", amount: "Result", placeholder: "normal, soft..." },
   pee: { label: "Pee", icon: "P", color: "#7fa6b8", amount: "Result", placeholder: "clear, frequent..." },
   weight: { label: "Weight", icon: "Kg", color: "#c86f5c", amount: "Weight", placeholder: "e.g. 4.8kg" },
-  vaccine: { label: "Vaccine", icon: "V", color: "#4f6f93", amount: "Dose", placeholder: "e.g. DHPP" },
+  vaccine: { label: "Vet", icon: "Vet", color: "#4f6f93", amount: "Detail", placeholder: "e.g. DHPP, checkup, clinic name" },
   school: { label: "Hundeschule", icon: "H", color: "#7f6aa3", amount: "Topic", placeholder: "e.g. leash walking" },
   play: { label: "Play", icon: "Pl", color: "#d68a6a", amount: "Duration", placeholder: "auto" },
   sleep: { label: "Sleep", icon: "S", color: "#6f7896", amount: "Duration", placeholder: "auto" },
@@ -89,6 +89,11 @@ const elements = {
   calendarEditorDuration: document.querySelector("#calendarEditorDuration"),
   calendarDurationFields: document.querySelector("#calendarDurationFields"),
   calendarEditorAmount: document.querySelector("#calendarEditorAmount"),
+  calendarVetKindField: document.querySelector("#calendarVetKindField"),
+  calendarVetKind: document.querySelector("#calendarVetKind"),
+  calendarVetReminderField: document.querySelector("#calendarVetReminderField"),
+  calendarVetReminderMinutes: document.querySelector("#calendarVetReminderMinutes"),
+  calendarVetReminderPreview: document.querySelector("#calendarVetReminderPreview"),
   calendarEditorNote: document.querySelector("#calendarEditorNote"),
   calendarAmountField: document.querySelector("#calendarAmountField"),
   calendarCancelEdit: document.querySelector("#calendarCancelEdit"),
@@ -115,6 +120,11 @@ const elements = {
   recordDuration: document.querySelector("#recordDuration"),
   durationFields: document.querySelector("#durationFields"),
   recordAmount: document.querySelector("#recordAmount"),
+  vetKindField: document.querySelector("#vetKindField"),
+  vetKind: document.querySelector("#vetKind"),
+  vetReminderField: document.querySelector("#vetReminderField"),
+  vetReminderMinutes: document.querySelector("#vetReminderMinutes"),
+  vetReminderPreview: document.querySelector("#vetReminderPreview"),
   recordNote: document.querySelector("#recordNote"),
   amountField: document.querySelector("#amountField"),
   saveRecord: document.querySelector("#saveRecord"),
@@ -285,6 +295,10 @@ function bindEvents() {
   };
   elements.calendarEditorTime.addEventListener("input", syncCalendarStartFromMainTime);
   elements.calendarEditorTime.addEventListener("change", syncCalendarStartFromMainTime);
+  elements.calendarEditorTime.addEventListener("input", updateCalendarVetReminderPreview);
+  elements.calendarEditorTime.addEventListener("change", updateCalendarVetReminderPreview);
+  elements.calendarVetReminderMinutes.addEventListener("input", updateCalendarVetReminderPreview);
+  elements.calendarVetReminderMinutes.addEventListener("change", updateCalendarVetReminderPreview);
   elements.calendarEditorStartTime.addEventListener("input", syncCalendarDurationFromEnd);
   elements.calendarEditorStartTime.addEventListener("change", syncCalendarDurationFromEnd);
   elements.calendarEditorEndTime.addEventListener("input", syncCalendarDurationFromEnd);
@@ -328,6 +342,10 @@ function bindEvents() {
   };
   elements.recordTime.addEventListener("input", syncStartFromMainTime);
   elements.recordTime.addEventListener("change", syncStartFromMainTime);
+  elements.recordTime.addEventListener("input", updateVetReminderPreview);
+  elements.recordTime.addEventListener("change", updateVetReminderPreview);
+  elements.vetReminderMinutes.addEventListener("input", updateVetReminderPreview);
+  elements.vetReminderMinutes.addEventListener("change", updateVetReminderPreview);
   elements.recordStartTime.addEventListener("input", syncDurationFromEnd);
   elements.recordStartTime.addEventListener("change", syncDurationFromEnd);
   elements.recordEndTime.addEventListener("input", syncDurationFromEnd);
@@ -636,6 +654,10 @@ function updateCalendarAmountField() {
   const config = typeConfig[activeCalendarType];
   elements.calendarAmountField.childNodes[0].nodeValue = `${config.amount} `;
   elements.calendarEditorAmount.placeholder = config.placeholder;
+  elements.calendarAmountField.hidden = activeCalendarType === "vaccine";
+  elements.calendarVetKindField.hidden = activeCalendarType !== "vaccine";
+  elements.calendarVetReminderField.hidden = activeCalendarType !== "vaccine";
+  updateCalendarVetReminderPreview();
   syncCalendarDurationVisibility();
 }
 
@@ -678,6 +700,7 @@ function saveCalendarRecord() {
   const record = buildCalendarRecordFromForm(createId());
   state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
   applyWeightRecordToProfile(record);
+  maybeRequestNotificationPermission();
   clearCalendarFormAfterSave();
   persist();
   renderCalendarView();
@@ -692,6 +715,11 @@ function buildCalendarRecordFromForm(id) {
     amount: elements.calendarEditorAmount.value.trim(),
     note: elements.calendarEditorNote.value.trim(),
   };
+
+  if (activeCalendarType === "vaccine") {
+    record.amount = elements.calendarVetKind.value || "Visit";
+    record.reminderMinutes = getSelectedReminderMinutes(elements.calendarVetReminderMinutes);
+  }
 
   if (timedRecordTypes.includes(activeCalendarType)) {
     const startTime = elements.calendarEditorStartTime.value || record.time;
@@ -718,6 +746,8 @@ function startCalendarEditRecord(record) {
   elements.calendarEditorEndTime.value = record.endTime || "";
   elements.calendarEditorDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
   elements.calendarEditorAmount.value = record.amount || "";
+  elements.calendarVetKind.value = getVetKind(record);
+  elements.calendarVetReminderMinutes.value = String(getVetReminderMinutes(record));
   elements.calendarEditorNote.value = record.note || "";
   document.querySelectorAll(".calendar-type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeCalendarType);
@@ -739,6 +769,7 @@ function updateCalendarEditedRecord() {
   Object.assign(record, buildCalendarRecordFromForm(record.id));
   applyWeightRecordToProfile(record);
   syncProfileWeightFromRecords();
+  maybeRequestNotificationPermission();
   persist();
   clearCalendarEditMode();
   renderCalendarView();
@@ -747,10 +778,13 @@ function updateCalendarEditedRecord() {
 
 function clearCalendarFormAfterSave() {
   elements.calendarEditorAmount.value = "";
+  elements.calendarVetKind.value = "Visit";
+  elements.calendarVetReminderMinutes.value = "60";
   elements.calendarEditorNote.value = "";
   elements.calendarEditorEndTime.value = "";
   elements.calendarEditorDuration.value = "";
   elements.calendarEditorStartTime.value = elements.calendarEditorTime.value || new Date().toTimeString().slice(0, 5);
+  updateCalendarVetReminderPreview();
 }
 
 function clearCalendarEditMode() {
@@ -825,6 +859,102 @@ function buildSelectedDayNoteSummary(records) {
       return detail ? `${label}: ${detail}` : label;
     })
     .join("; ");
+}
+
+function getVetKind(record) {
+  const amount = String(record?.amount || "").trim();
+  if (/^visit$/i.test(amount)) {
+    return "Visit";
+  }
+  if (/regular|visit|check|clinic|vet/i.test(amount)) {
+    return "Regular visit";
+  }
+  return "Vaccine";
+}
+
+function getVetReminderMinutes(record) {
+  const minutes = Number(record?.reminderMinutes);
+  return Number.isFinite(minutes) && minutes >= 0 ? minutes : 60;
+}
+
+function getSelectedReminderMinutes(select) {
+  const minutes = Number(select?.value);
+  return Number.isFinite(minutes) && minutes >= 0 ? Math.round(minutes) : 60;
+}
+
+function getVetVisitDate(dateKey, record) {
+  const date = parseDateKey(dateKey);
+  if (!date) {
+    return null;
+  }
+  const [hours, minutes] = parseTimeParts(record?.time || "09:00");
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function getVetReminderDate(dateKey, record) {
+  const visitDate = getVetVisitDate(dateKey, record);
+  if (!visitDate) {
+    return null;
+  }
+  return new Date(visitDate.getTime() - getVetReminderMinutes(record) * 60000);
+}
+
+function formatVetReminderText(dateKey, record) {
+  const reminderDate = getVetReminderDate(dateKey, record);
+  if (!reminderDate) {
+    return "";
+  }
+  return `Reminder ${formatReminderLead(getVetReminderMinutes(record))}: ${formatDateKey(toKey(reminderDate))} ${formatTime(reminderDate.toTimeString().slice(0, 5))}`;
+}
+
+function formatReminderLead(minutes) {
+  if (!minutes) {
+    return "at visit time";
+  }
+  if (minutes < 60) {
+    return `${minutes} min before`;
+  }
+  if (minutes % 1440 === 0) {
+    const days = minutes / 1440;
+    return `${days} day${days === 1 ? "" : "s"} before`;
+  }
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} hr before`;
+  }
+  return `${minutes} min before`;
+}
+
+function updateVetReminderPreview() {
+  if (!elements.vetReminderPreview) {
+    return;
+  }
+  if (activeType !== "vaccine") {
+    elements.vetReminderPreview.textContent = "";
+    return;
+  }
+  const reminderText = formatVetReminderText(selectedDate, {
+    time: elements.recordTime.value || "09:00",
+    reminderMinutes: getSelectedReminderMinutes(elements.vetReminderMinutes),
+  });
+  elements.vetReminderPreview.textContent = reminderText;
+}
+
+function updateCalendarVetReminderPreview() {
+  if (!elements.calendarVetReminderPreview) {
+    return;
+  }
+  if (activeCalendarType !== "vaccine") {
+    elements.calendarVetReminderPreview.textContent = "";
+    return;
+  }
+  const dateKey = elements.calendarEditorDate.value || selectedDate;
+  const reminderText = formatVetReminderText(dateKey, {
+    time: elements.calendarEditorTime.value || "09:00",
+    reminderMinutes: getSelectedReminderMinutes(elements.calendarVetReminderMinutes),
+  });
+  elements.calendarVetReminderPreview.textContent = reminderText;
 }
 
 function renderBookmarksView() {
@@ -938,7 +1068,7 @@ function getAvailableBookmarkYears() {
 
 function createRecordListItem(record, dateKey) {
   const config = typeConfig[record.type] || typeConfig.note;
-  const meta = getRecordListMeta(record);
+  const meta = getRecordListMeta(record, dateKey);
   const item = document.createElement("article");
   item.className = "record-item";
   item.innerHTML = `
@@ -955,9 +1085,12 @@ function createRecordListItem(record, dateKey) {
   return item;
 }
 
-function getRecordListMeta(record) {
+function getRecordListMeta(record, dateKey = "") {
   if (timedRecordTypes.includes(record.type)) {
     return [formatDurationHoursMinutes(getRecordDuration(record)), formatTimeRange(record)].filter(Boolean).join(" - ");
+  }
+  if (record.type === "vaccine") {
+    return [record.amount || "Visit", record.note, formatVetReminderText(dateKey, record)].filter(Boolean).join(" - ");
   }
   return [record.amount, record.note].filter(Boolean).join(" - ");
 }
@@ -1043,7 +1176,7 @@ function renderRecords() {
   elements.recordList.innerHTML = "";
 
   if (!records.length) {
-    elements.recordList.innerHTML = `<p class="empty-state">No records yet. Add walks, meals, potty breaks, weight, or vaccines for this day.</p>`;
+    elements.recordList.innerHTML = `<p class="empty-state">No records yet. Add walks, meals, potty breaks, weight, or vet visits for this day.</p>`;
     return;
   }
 
@@ -1469,6 +1602,7 @@ function saveRecord() {
   }
 
   clearFormAfterSave();
+  maybeRequestNotificationPermission();
   persist();
   renderDayView();
 }
@@ -1483,6 +1617,10 @@ function buildRecordFromForm(id) {
   };
 
   record.id = id;
+  if (activeType === "vaccine") {
+    record.amount = elements.vetKind.value || "Visit";
+    record.reminderMinutes = getSelectedReminderMinutes(elements.vetReminderMinutes);
+  }
   if (timedRecordTypes.includes(activeType)) {
     const startTime = elements.recordStartTime.value || record.time;
     const durationMinutes = Math.max(1, durationFromTimes(startTime, elements.recordEndTime.value) || Number(elements.recordDuration.value) || parseDurationMinutes(record.amount) || 1);
@@ -1500,10 +1638,13 @@ function buildRecordFromForm(id) {
 
 function clearFormAfterSave() {
   elements.recordAmount.value = "";
+  elements.vetKind.value = "Visit";
+  elements.vetReminderMinutes.value = "60";
   elements.recordNote.value = "";
   elements.recordEndTime.value = "";
   elements.recordDuration.value = "";
   elements.recordStartTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
+  updateVetReminderPreview();
 }
 
 function startEditRecord(record) {
@@ -1514,6 +1655,8 @@ function startEditRecord(record) {
   elements.recordEndTime.value = record.endTime || "";
   elements.recordDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
   elements.recordAmount.value = record.amount || "";
+  elements.vetKind.value = getVetKind(record);
+  elements.vetReminderMinutes.value = String(getVetReminderMinutes(record));
   elements.recordNote.value = record.note || "";
   document.querySelectorAll(".type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeType);
@@ -1540,6 +1683,7 @@ function updateEditedRecord() {
     }
   }
   syncProfileWeightFromRecords();
+  maybeRequestNotificationPermission();
   persist();
   clearEditMode();
   renderDayView();
@@ -1649,8 +1793,8 @@ function getCategoryDetail(entry, activeCategoryType = "") {
 
   if (entry.type === "vaccine") {
     return {
-      primary: entry.note || entry.amount || "Vaccine",
-      secondary: entry.amount && entry.note ? entry.amount : "",
+      primary: [entry.amount || "Regular visit", "Vet"].join(" - "),
+      secondary: [entry.note, formatVetReminderText(entry.date, entry)].filter(Boolean).join(" - "),
     };
   }
 
@@ -1839,10 +1983,10 @@ function renderDailySummary(type) {
     const notes = records.filter((record) => record.type === "note").length;
     const showers = records.filter((record) => record.type === "shower").length;
     const teeth = records.filter((record) => record.type === "tooth").length;
-    const vaccines = records.filter((record) => record.type === "vaccine").length;
+    const vetVisits = records.filter((record) => record.type === "vaccine").length;
     const schools = records.filter((record) => record.type === "school").length;
     parts.push(`${records.length} side notes today`);
-    parts.push(`${showers} shower`, `${teeth} teeth`, `${vaccines} vaccine`, `${schools} school`, `${notes} notes`);
+    parts.push(`${showers} shower`, `${teeth} teeth`, `${vetVisits} vet`, `${schools} school`, `${notes} notes`);
   } else if (type !== "weight" && type !== "vaccine") {
     parts.push(`${records.length} records today`);
   }
@@ -2102,6 +2246,33 @@ function getVaccineReminders() {
   return reminders;
 }
 
+function getVetRecordReminders() {
+  return Object.entries(state.records || {})
+    .flatMap(([dateKey, records]) =>
+      (records || [])
+        .filter((record) => record.type === "vaccine")
+        .map((record) => {
+          const visitDate = getVetVisitDate(dateKey, record);
+          const reminderDate = getVetReminderDate(dateKey, record);
+          if (!visitDate || !reminderDate) {
+            return null;
+          }
+          const kind = record.amount || "Visit";
+          const detail = record.note ? ` - ${record.note}` : "";
+          return {
+            date: reminderDate,
+            visitDate,
+            title: `Vet reminder: ${kind}`,
+            body: `Visit ${formatDateKey(dateKey)} ${formatTime(record.time || "09:00")} - ${formatReminderLead(getVetReminderMinutes(record))}${detail}`,
+            urgent: minutesUntil(reminderDate) >= 0 && minutesUntil(reminderDate) <= 1,
+          };
+        })
+        .filter(Boolean)
+    )
+    .filter((reminder) => minutesUntil(reminder.visitDate) >= -60)
+    .sort((a, b) => a.date - b.date);
+}
+
 function getSchoolReminders() {
   const nextClass = getNextWeeklyOccurrence(
     state.schoolSchedule.weekday,
@@ -2175,6 +2346,7 @@ function showDueVaccinationNotification() {
   }
 
   const urgent = [
+    ...getVetRecordReminders(),
     ...(state.settings.vaccineAlarmEnabled ? getVaccineReminders() : []),
     ...(state.settings.schoolAlarmEnabled ? getSchoolReminders() : []),
     ...(state.settings.foodAlarmEnabled ? getFoodReminders() : []),
@@ -2191,12 +2363,12 @@ function showDueVaccinationNotification() {
   persist();
 
   new Notification("Puppy Record Book reminder", {
-    body: urgent.title,
+    body: [urgent.title, urgent.body].filter(Boolean).join(" - "),
   });
 }
 
 function anyAlarmEnabled() {
-  return state.settings.vaccineAlarmEnabled || state.settings.schoolAlarmEnabled || state.settings.foodAlarmEnabled;
+  return getVetRecordReminders().length > 0 || state.settings.vaccineAlarmEnabled || state.settings.schoolAlarmEnabled || state.settings.foodAlarmEnabled;
 }
 
 function startAlarmTimer() {
@@ -2235,6 +2407,7 @@ function updateInstallStatus(message) {
 }
 
 function getSyncPayload() {
+  syncProfileWeightFromRecords();
   const syncState = {
     ...state,
     photos: [],
@@ -2677,6 +2850,7 @@ function mergeSyncedPayload(payload) {
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, merged);
   state.photos = localPhotos;
+  syncProfileWeightFromRecords();
   persist({ skipAutoSync: true });
   hydrateMainProfile();
   hydrateProfileForm();
@@ -2754,7 +2928,12 @@ function mergeBookmarks(localBookmarks, remoteBookmarks) {
       merged[date] = local;
       return;
     }
-    merged[date] = local.updatedAt >= remote.updatedAt ? local : remote;
+    const latest = local.updatedAt >= remote.updatedAt ? local : remote;
+    const other = latest === local ? remote : local;
+    merged[date] = {
+      ...latest,
+      note: latest.note || (latest.bookmarked && other.bookmarked ? other.note : ""),
+    };
   });
   return Object.fromEntries(Object.entries(merged).filter(([, value]) => value));
 }
@@ -3016,6 +3195,10 @@ function createId() {
 function updateAmountField() {
   elements.amountField.childNodes[0].nodeValue = `${typeConfig[activeType].amount} `;
   elements.recordAmount.placeholder = typeConfig[activeType].placeholder;
+  elements.amountField.hidden = activeType === "vaccine";
+  elements.vetKindField.hidden = activeType !== "vaccine";
+  elements.vetReminderField.hidden = activeType !== "vaccine";
+  updateVetReminderPreview();
   syncDurationVisibility();
   if (timedRecordTypes.includes(activeType)) {
     elements.recordStartTime.value = elements.recordStartTime.value || elements.recordTime.value || new Date().toTimeString().slice(0, 5);
@@ -3071,10 +3254,10 @@ function getWeightRecords() {
     .flatMap(([date, records]) =>
       records
         .filter((record) => record.type === "weight")
-        .map((record) => ({ date, id: record.id, value: parseWeight(record.amount) }))
+        .map((record) => ({ date, time: record.time || "", id: record.id, value: parseWeight(record.amount) }))
     )
     .filter((record) => Number.isFinite(record.value))
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
 }
 
 function estimateExpectedWeight(ageMonths, adultWeight) {

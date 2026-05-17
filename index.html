@@ -163,7 +163,7 @@
                 <button type="button" class="type-button" data-type="poop">Poop</button>
                 <button type="button" class="type-button" data-type="pee">Pee</button>
                 <button type="button" class="type-button" data-type="weight">Weight</button>
-                <button type="button" class="type-button" data-type="vaccine">Vaccine</button>
+                <button type="button" class="type-button" data-type="vaccine">Vet</button>
                 <button type="button" class="type-button" data-type="play">Play</button>
                 <button type="button" class="type-button" data-type="sleep">Sleep</button>
                 <button type="button" class="type-button" data-type="train">Train</button>
@@ -183,6 +183,26 @@
                   <input id="recordAmount" placeholder="e.g. 120g" />
                 </label>
               </div>
+              <label id="vetKindField" hidden>
+                Visit type
+                <select id="vetKind">
+                  <option value="Visit">Visit</option>
+                  <option value="Vaccine">Vaccine</option>
+                  <option value="Regular visit">Regular visit</option>
+                </select>
+              </label>
+              <label id="vetReminderField" hidden>
+                Remind me
+                <select id="vetReminderMinutes">
+                  <option value="0">At visit time</option>
+                  <option value="10">10 minutes before</option>
+                  <option value="30">30 minutes before</option>
+                  <option value="60">1 hour before</option>
+                  <option value="1440">1 day before</option>
+                  <option value="2880">2 days before</option>
+                </select>
+                <span id="vetReminderPreview" class="reminder-preview"></span>
+              </label>
               <div id="durationFields" class="duration-panel" hidden>
                 <label>
                   Start
@@ -274,7 +294,7 @@
                 <button type="button" class="calendar-type-button" data-type="poop">Poop</button>
                 <button type="button" class="calendar-type-button" data-type="pee">Pee</button>
                 <button type="button" class="calendar-type-button" data-type="weight">Weight</button>
-                <button type="button" class="calendar-type-button" data-type="vaccine">Vaccine</button>
+                <button type="button" class="calendar-type-button" data-type="vaccine">Vet</button>
                 <button type="button" class="calendar-type-button" data-type="play">Play</button>
                 <button type="button" class="calendar-type-button" data-type="sleep">Sleep</button>
                 <button type="button" class="calendar-type-button" data-type="train">Train</button>
@@ -294,6 +314,26 @@
                   <input id="calendarEditorAmount" placeholder="e.g. 120g" />
                 </label>
               </div>
+              <label id="calendarVetKindField" hidden>
+                Visit type
+                <select id="calendarVetKind">
+                  <option value="Visit">Visit</option>
+                  <option value="Vaccine">Vaccine</option>
+                  <option value="Regular visit">Regular visit</option>
+                </select>
+              </label>
+              <label id="calendarVetReminderField" hidden>
+                Remind me
+                <select id="calendarVetReminderMinutes">
+                  <option value="0">At visit time</option>
+                  <option value="10">10 minutes before</option>
+                  <option value="30">30 minutes before</option>
+                  <option value="60">1 hour before</option>
+                  <option value="1440">1 day before</option>
+                  <option value="2880">2 days before</option>
+                </select>
+                <span id="calendarVetReminderPreview" class="reminder-preview"></span>
+              </label>
               <div id="calendarDurationFields" class="duration-panel" hidden>
                 <label>
                   Start

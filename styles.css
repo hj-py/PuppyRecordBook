@@ -579,6 +579,15 @@ select:focus {
   line-height: 1.35;
 }
 
+.reminder-preview {
+  display: block;
+  margin-top: 6px;
+  color: var(--leaf-dark);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .category-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

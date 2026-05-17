@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Puppy Quick Log</title>
+    <link rel="icon" href="./leo-widget.ico" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon-v34.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./quick-widget.css" />
+  </head>
+  <body>
+    <main class="widget-shell">
+      <header class="widget-header">
+        <div>
+          <p>Puppy Record Book</p>
+          <h1 id="widgetTitle">Quick Log</h1>
+        </div>
+        <button id="syncNow" type="button" title="Pull and push Firebase">Sync</button>
+      </header>
+
+      <section class="status-card">
+        <strong id="statusText">Overview of the day</strong>
+        <span id="todaySummary">No records today</span>
+      </section>
+
+      <section class="quick-grid" aria-label="Quick log buttons">
+        <button type="button" data-action="pee">Pee</button>
+        <button type="button" data-action="poop">Poop</button>
+        <button type="button" data-action="walk" class="timed">Walk</button>
+        <button type="button" data-action="play" class="timed">Play</button>
+        <button type="button" data-action="sleep" class="timed">Sleep</button>
+        <button type="button" data-action="train" class="timed">Train</button>
+        <button type="button" data-action="food" class="food">Food</button>
+        <button type="button" data-action="water" class="water">Water</button>
+        <button type="button" data-action="box" class="timed">Box</button>
+      </section>
+
+      <section>
+        <div class="section-title">
+          <h2>Today</h2>
+          <span id="recordCount">0</span>
+        </div>
+        <div id="recordList" class="record-list"></div>
+      </section>
+
+      <details class="settings-panel">
+        <summary>Sync settings</summary>
+        <label>
+          Sync code
+          <input id="syncCode" placeholder="leo-family-2026" />
+        </label>
+        <label>
+          Firebase config JSON
+          <textarea id="firebaseConfig" placeholder='{"apiKey":"...","projectId":"...","appId":"..."}'></textarea>
+        </label>
+        <p>These are shared with the main app on this Windows browser profile.</p>
+      </details>
+    </main>
+
+    <script src="./quick-widget.js"></script>
+  </body>
+</html>
