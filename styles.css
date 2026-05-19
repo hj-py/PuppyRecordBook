@@ -292,6 +292,28 @@ input::-webkit-date-and-time-value {
   text-align: left;
 }
 
+.checkbox-label {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+}
+
+.checkbox-label span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
 label,
 .info-grid,
 .profile-fields,
@@ -617,6 +639,13 @@ select:focus {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+}
+
+.category-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
 }
 
 .category-summary span {

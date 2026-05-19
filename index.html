@@ -183,6 +183,17 @@
                   <input id="recordAmount" placeholder="e.g. 120g" />
                 </label>
               </div>
+              <label id="foodKindField" hidden>
+                Food type
+                <select id="foodKind">
+                  <option value="food">Food</option>
+                  <option value="snack">Snack</option>
+                </select>
+              </label>
+              <label id="snackNameField" hidden>
+                Snack
+                <select id="snackName"></select>
+              </label>
               <label id="vetKindField" hidden>
                 Visit type
                 <select id="vetKind">
@@ -202,6 +213,10 @@
                   <option value="2880">2 days before</option>
                 </select>
                 <span id="vetReminderPreview" class="reminder-preview"></span>
+              </label>
+              <label id="accidentField" class="checkbox-label" hidden>
+                <input id="recordAccident" type="checkbox" />
+                <span>Accident</span>
               </label>
               <div id="durationFields" class="duration-panel" hidden>
                 <label>
@@ -314,6 +329,17 @@
                   <input id="calendarEditorAmount" placeholder="e.g. 120g" />
                 </label>
               </div>
+              <label id="calendarFoodKindField" hidden>
+                Food type
+                <select id="calendarFoodKind">
+                  <option value="food">Food</option>
+                  <option value="snack">Snack</option>
+                </select>
+              </label>
+              <label id="calendarSnackNameField" hidden>
+                Snack
+                <select id="calendarSnackName"></select>
+              </label>
               <label id="calendarVetKindField" hidden>
                 Visit type
                 <select id="calendarVetKind">
@@ -333,6 +359,10 @@
                   <option value="2880">2 days before</option>
                 </select>
                 <span id="calendarVetReminderPreview" class="reminder-preview"></span>
+              </label>
+              <label id="calendarAccidentField" class="checkbox-label" hidden>
+                <input id="calendarRecordAccident" type="checkbox" />
+                <span>Accident</span>
               </label>
               <div id="calendarDurationFields" class="duration-panel" hidden>
                 <label>
@@ -539,7 +569,38 @@
             <div class="info-grid">
               <label>
                 Current food type
-                <input id="foodType" maxlength="80" placeholder="e.g. puppy kibble, wet food" />
+                <input id="foodType" maxlength="80" list="joseraFoodOptions" placeholder="e.g. Josera YoungStar" />
+                <datalist id="joseraFoodOptions">
+                  <option value="Josera YoungStar"></option>
+                  <option value="Josera Kids"></option>
+                  <option value="Josera SensiJunior"></option>
+                  <option value="Josera Mini Junior Duck & Salmon"></option>
+                  <option value="Josera Junior Duck & Potato"></option>
+                </datalist>
+              </label>
+              <label>
+                Snack list
+                <textarea id="snackList" placeholder="Dental stick&#10;Training treat&#10;Carrot"></textarea>
+              </label>
+              <label>
+                Daily needed
+                <input id="foodDailyTarget" type="number" min="0" max="1200" step="1" inputmode="numeric" placeholder="e.g. 240" />
+              </label>
+              <label>
+                Expected grown weight
+                <input id="foodExpectedWeight" type="number" min="5" max="90" step="1" inputmode="numeric" placeholder="e.g. 30" />
+              </label>
+              <label>
+                Growth estimate
+                <input id="foodEstimatedWeight" readonly />
+              </label>
+              <label class="checkbox-label">
+                <input id="foodUseEstimatedWeight" type="checkbox" />
+                <span>Use growth estimate for Josera target</span>
+              </label>
+              <label class="checkbox-label">
+                <input id="foodAutoTarget" type="checkbox" />
+                <span>Update weekly from Josera calculator</span>
               </label>
               <label>
                 Remind before food
@@ -570,6 +631,7 @@
                 <input id="foodAmountEvening" maxlength="40" placeholder="e.g. 140g" />
               </label>
             </div>
+            <p id="foodRecommendationStatus" class="legal-note"></p>
             <div id="foodReminderList" class="reminder-list"></div>
           </section>
 

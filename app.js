@@ -22,6 +22,53 @@ const categoryTypes = ["walk", "food", "water", "weight", "sleep", "box", "note"
 const timedQuickTypes = ["walk", "play", "sleep", "train", "box"];
 const timedRecordTypes = ["walk", "play", "sleep", "train", "box"];
 const analyticsStartKey = "2026-05-09";
+const notePlaceholder = "Park, chicken kibble, rabies vaccine...";
+const defaultSnackList = ["Dental stick", "Training treat", "Carrot"];
+const joseraFeedingSourceUrl = "https://josera.com/en/feeding-calculator";
+const joseraProducts = [
+  {
+    key: "youngstar",
+    label: "YoungStar",
+    kcalPerKg: 3725,
+    guideUrl: "https://www.josera.de/josera-youngstar.html",
+    aliases: ["young star", "josera youngstar", "josera young star", "youngstar dry food"],
+  },
+  {
+    key: "kids",
+    label: "Kids",
+    kcalPerKg: 3675,
+    guideUrl: "https://www.josera.fr/josera-kids.html",
+    aliases: ["josera kids", "kids dry food"],
+  },
+  {
+    key: "sensijunior",
+    label: "SensiJunior",
+    kcalPerKg: 3950,
+    guideUrl: "https://www.josera.fr/josera-sensijunior.html",
+    aliases: ["sensi junior", "josera sensijunior", "josera sensi junior"],
+  },
+  {
+    key: "mini-junior-duck-salmon",
+    label: "Mini Junior Duck & Salmon",
+    kcalPerKg: 3991,
+    guideUrl: "https://www.josera.fr/josera-minijunior.html",
+    aliases: ["mini junior", "minijunior", "duck salmon", "duck & salmon", "mini junior duck salmon"],
+  },
+  {
+    key: "junior-duck-potato",
+    label: "Junior Duck & Potato",
+    kcalPerKg: 3689,
+    guideUrl: "https://www.josera.fr/josera-junior-duck-potato-relaunch25.html",
+    aliases: ["junior duck potato", "duck potato", "duck & potato"],
+  },
+];
+const joseraGrowthModel = {
+  7: { a: 36.92, b: -43.57 },
+  15: { a: 36.86, b: -48.22 },
+  27.5: { a: 39.88, b: -60.7 },
+  47.5: { a: 36.96, b: -56.18 },
+  class5: { a: 36.61, b: -62.39 },
+};
 const defaultPhoto =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='84' r='50' fill='%23fffdf8'/%3E%3Cpath d='M43 58c-15 7-25 21-23 36 1 12 9 20 19 20 12 0 19-11 18-24-1-10-6-22-14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M117 58c15 7 25 21 23 36-1 12-9 20-19 20-12 0-19-11-18-24 1-10 6-22 14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M44 70c9-26 64-26 73 0 7 19-1 50-37 50S37 89 44 70Z' fill='%23fff8e9'/%3E%3Cpath d='M55 63c9-14 43-18 52 0-13-7-39-7-52 0Z' fill='%23f6edda'/%3E%3Ccircle cx='64' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='96' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='66' cy='78' r='2' fill='%23fffdf8'/%3E%3Ccircle cx='98' cy='78' r='2' fill='%23fffdf8'/%3E%3Cellipse cx='80' cy='95' rx='11' ry='8' fill='%232d2923'/%3E%3Cpath d='M71 108c7 7 17 7 25 0' fill='none' stroke='%232d2923' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
@@ -89,11 +136,17 @@ const elements = {
   calendarEditorDuration: document.querySelector("#calendarEditorDuration"),
   calendarDurationFields: document.querySelector("#calendarDurationFields"),
   calendarEditorAmount: document.querySelector("#calendarEditorAmount"),
+  calendarFoodKindField: document.querySelector("#calendarFoodKindField"),
+  calendarFoodKind: document.querySelector("#calendarFoodKind"),
+  calendarSnackNameField: document.querySelector("#calendarSnackNameField"),
+  calendarSnackName: document.querySelector("#calendarSnackName"),
   calendarVetKindField: document.querySelector("#calendarVetKindField"),
   calendarVetKind: document.querySelector("#calendarVetKind"),
   calendarVetReminderField: document.querySelector("#calendarVetReminderField"),
   calendarVetReminderMinutes: document.querySelector("#calendarVetReminderMinutes"),
   calendarVetReminderPreview: document.querySelector("#calendarVetReminderPreview"),
+  calendarAccidentField: document.querySelector("#calendarAccidentField"),
+  calendarRecordAccident: document.querySelector("#calendarRecordAccident"),
   calendarEditorNote: document.querySelector("#calendarEditorNote"),
   calendarAmountField: document.querySelector("#calendarAmountField"),
   calendarCancelEdit: document.querySelector("#calendarCancelEdit"),
@@ -120,11 +173,17 @@ const elements = {
   recordDuration: document.querySelector("#recordDuration"),
   durationFields: document.querySelector("#durationFields"),
   recordAmount: document.querySelector("#recordAmount"),
+  foodKindField: document.querySelector("#foodKindField"),
+  foodKind: document.querySelector("#foodKind"),
+  snackNameField: document.querySelector("#snackNameField"),
+  snackName: document.querySelector("#snackName"),
   vetKindField: document.querySelector("#vetKindField"),
   vetKind: document.querySelector("#vetKind"),
   vetReminderField: document.querySelector("#vetReminderField"),
   vetReminderMinutes: document.querySelector("#vetReminderMinutes"),
   vetReminderPreview: document.querySelector("#vetReminderPreview"),
+  accidentField: document.querySelector("#accidentField"),
+  recordAccident: document.querySelector("#recordAccident"),
   recordNote: document.querySelector("#recordNote"),
   amountField: document.querySelector("#amountField"),
   saveRecord: document.querySelector("#saveRecord"),
@@ -169,6 +228,13 @@ const elements = {
   schoolReminderList: document.querySelector("#schoolReminderList"),
   enableFoodAlarm: document.querySelector("#enableFoodAlarm"),
   foodType: document.querySelector("#foodType"),
+  snackList: document.querySelector("#snackList"),
+  foodDailyTarget: document.querySelector("#foodDailyTarget"),
+  foodExpectedWeight: document.querySelector("#foodExpectedWeight"),
+  foodEstimatedWeight: document.querySelector("#foodEstimatedWeight"),
+  foodUseEstimatedWeight: document.querySelector("#foodUseEstimatedWeight"),
+  foodAutoTarget: document.querySelector("#foodAutoTarget"),
+  foodRecommendationStatus: document.querySelector("#foodRecommendationStatus"),
   foodReminderMinutes: document.querySelector("#foodReminderMinutes"),
   foodTimeMorning: document.querySelector("#foodTimeMorning"),
   foodTimeAfternoon: document.querySelector("#foodTimeAfternoon"),
@@ -193,6 +259,10 @@ init();
 function init() {
   elements.puppyName.value = state.profile.name;
   elements.adultWeight.value = state.profile.weightKg;
+  const foodRecommendationChanged = refreshFoodRecommendationIfNeeded();
+  if (foodRecommendationChanged) {
+    persist({ skipAutoSync: true });
+  }
   hydrateProfileForm();
   syncProfileWeightFromRecords();
   elements.heroPhoto.src = getLatestPhoto()?.src || defaultPhoto;
@@ -299,6 +369,7 @@ function bindEvents() {
   elements.calendarEditorTime.addEventListener("change", updateCalendarVetReminderPreview);
   elements.calendarVetReminderMinutes.addEventListener("input", updateCalendarVetReminderPreview);
   elements.calendarVetReminderMinutes.addEventListener("change", updateCalendarVetReminderPreview);
+  elements.calendarFoodKind.addEventListener("change", syncCalendarFoodKindFields);
   elements.calendarEditorStartTime.addEventListener("input", syncCalendarDurationFromEnd);
   elements.calendarEditorStartTime.addEventListener("change", syncCalendarDurationFromEnd);
   elements.calendarEditorEndTime.addEventListener("input", syncCalendarDurationFromEnd);
@@ -310,9 +381,14 @@ function bindEvents() {
 
   document.querySelectorAll(".calendar-type-button").forEach((button) => {
     button.addEventListener("click", () => {
-      activeCalendarType = button.dataset.type;
+      const nextType = button.dataset.type;
+      if (!calendarEditingRecordId && nextType !== activeCalendarType) {
+        resetCalendarEditorTimeToNow();
+      }
+      activeCalendarType = nextType;
       document.querySelectorAll(".calendar-type-button").forEach((item) => item.classList.toggle("selected", item === button));
       updateCalendarAmountField();
+      syncCalendarFoodKindFields();
     });
   });
 
@@ -346,6 +422,7 @@ function bindEvents() {
   elements.recordTime.addEventListener("change", updateVetReminderPreview);
   elements.vetReminderMinutes.addEventListener("input", updateVetReminderPreview);
   elements.vetReminderMinutes.addEventListener("change", updateVetReminderPreview);
+  elements.foodKind.addEventListener("change", syncFoodKindFields);
   elements.recordStartTime.addEventListener("input", syncDurationFromEnd);
   elements.recordStartTime.addEventListener("change", syncDurationFromEnd);
   elements.recordEndTime.addEventListener("input", syncDurationFromEnd);
@@ -355,9 +432,14 @@ function bindEvents() {
 
   document.querySelectorAll(".type-button").forEach((button) => {
     button.addEventListener("click", () => {
-      activeType = button.dataset.type;
+      const nextType = button.dataset.type;
+      if (!editingRecordId && nextType !== activeType) {
+        resetRecordTimeToNow();
+      }
+      activeType = nextType;
       document.querySelectorAll(".type-button").forEach((item) => item.classList.toggle("selected", item === button));
       updateAmountField();
+      syncFoodKindFields();
     });
   });
 
@@ -400,21 +482,21 @@ function bindEvents() {
     state.settings.vaccineAlarmEnabled = !state.settings.vaccineAlarmEnabled;
     persist();
     renderReminderSections();
-    maybeRequestNotificationPermission();
+    maybeRequestNotificationPermission({ allowPrompt: state.settings.vaccineAlarmEnabled });
   });
 
   elements.enableSchoolAlarm.addEventListener("click", () => {
     state.settings.schoolAlarmEnabled = !state.settings.schoolAlarmEnabled;
     persist();
     renderReminderSections();
-    maybeRequestNotificationPermission();
+    maybeRequestNotificationPermission({ allowPrompt: state.settings.schoolAlarmEnabled });
   });
 
   elements.enableFoodAlarm.addEventListener("click", () => {
     state.settings.foodAlarmEnabled = !state.settings.foodAlarmEnabled;
     persist();
     renderReminderSections();
-    maybeRequestNotificationPermission();
+    maybeRequestNotificationPermission({ allowPrompt: state.settings.foodAlarmEnabled });
   });
 
   elements.installAppButton.addEventListener("click", installPwa);
@@ -655,10 +737,21 @@ function updateCalendarAmountField() {
   elements.calendarAmountField.childNodes[0].nodeValue = `${config.amount} `;
   elements.calendarEditorAmount.placeholder = config.placeholder;
   elements.calendarAmountField.hidden = activeCalendarType === "vaccine";
+  elements.calendarFoodKindField.hidden = activeCalendarType !== "food";
   elements.calendarVetKindField.hidden = activeCalendarType !== "vaccine";
   elements.calendarVetReminderField.hidden = activeCalendarType !== "vaccine";
   updateCalendarVetReminderPreview();
+  syncCalendarFoodKindFields();
+  syncCalendarAccidentFieldVisibility();
   syncCalendarDurationVisibility();
+}
+
+function syncCalendarAccidentFieldVisibility() {
+  const show = ["pee", "poop"].includes(activeCalendarType);
+  elements.calendarAccidentField.hidden = !show;
+  if (!show) {
+    elements.calendarRecordAccident.checked = false;
+  }
 }
 
 function syncCalendarDurationVisibility() {
@@ -700,7 +793,9 @@ function saveCalendarRecord() {
   const record = buildCalendarRecordFromForm(createId());
   state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
   applyWeightRecordToProfile(record);
-  maybeRequestNotificationPermission();
+  if (record.type === "vaccine") {
+    maybeRequestNotificationPermission({ allowPrompt: true });
+  }
   clearCalendarFormAfterSave();
   persist();
   renderCalendarView();
@@ -719,6 +814,16 @@ function buildCalendarRecordFromForm(id) {
   if (activeCalendarType === "vaccine") {
     record.amount = elements.calendarVetKind.value || "Visit";
     record.reminderMinutes = getSelectedReminderMinutes(elements.calendarVetReminderMinutes);
+  }
+  if (activeCalendarType === "food") {
+    record.foodKind = elements.calendarFoodKind.value || "food";
+    record.snackName = record.foodKind === "snack" && !elements.calendarSnackName.disabled ? elements.calendarSnackName.value || "" : "";
+    if (record.foodKind === "snack") {
+      record.note = "";
+    }
+  }
+  if (["pee", "poop"].includes(activeCalendarType)) {
+    record.accident = elements.calendarRecordAccident.checked;
   }
 
   if (timedRecordTypes.includes(activeCalendarType)) {
@@ -746,13 +851,17 @@ function startCalendarEditRecord(record) {
   elements.calendarEditorEndTime.value = record.endTime || "";
   elements.calendarEditorDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
   elements.calendarEditorAmount.value = record.amount || "";
+  elements.calendarFoodKind.value = getFoodKind(record);
+  populateSnackSelect(elements.calendarSnackName, getSnackName(record));
   elements.calendarVetKind.value = getVetKind(record);
   elements.calendarVetReminderMinutes.value = String(getVetReminderMinutes(record));
+  elements.calendarRecordAccident.checked = Boolean(record.accident);
   elements.calendarEditorNote.value = record.note || "";
   document.querySelectorAll(".calendar-type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeCalendarType);
   });
   updateCalendarAmountField();
+  syncCalendarFoodKindFields();
   elements.calendarSaveRecord.textContent = "Update";
   elements.calendarCancelEdit.hidden = false;
   elements.calendarEditorAmount.focus();
@@ -769,7 +878,9 @@ function updateCalendarEditedRecord() {
   Object.assign(record, buildCalendarRecordFromForm(record.id));
   applyWeightRecordToProfile(record);
   syncProfileWeightFromRecords();
-  maybeRequestNotificationPermission();
+  if (record.type === "vaccine") {
+    maybeRequestNotificationPermission({ allowPrompt: true });
+  }
   persist();
   clearCalendarEditMode();
   renderCalendarView();
@@ -778,13 +889,14 @@ function updateCalendarEditedRecord() {
 
 function clearCalendarFormAfterSave() {
   elements.calendarEditorAmount.value = "";
+  elements.calendarFoodKind.value = "food";
+  populateSnackSelect(elements.calendarSnackName);
   elements.calendarVetKind.value = "Visit";
   elements.calendarVetReminderMinutes.value = "60";
+  elements.calendarRecordAccident.checked = false;
   elements.calendarEditorNote.value = "";
-  elements.calendarEditorEndTime.value = "";
-  elements.calendarEditorDuration.value = "";
-  elements.calendarEditorStartTime.value = elements.calendarEditorTime.value || new Date().toTimeString().slice(0, 5);
-  updateCalendarVetReminderPreview();
+  syncCalendarFoodKindFields();
+  resetCalendarEditorTimeToNow();
 }
 
 function clearCalendarEditMode() {
@@ -818,7 +930,7 @@ function renderSelectedDayTotalSummary(dateKey) {
   const boxMinutes = durationFor("box");
   const peeCount = countFor("pee");
   const poopCount = countFor("poop");
-  const foodGrams = sumAmount(records.filter((record) => record.type === "food"), "g");
+  const foodProgress = formatFoodProgress(records, dateKey);
   const waterMl = sumAmount(records.filter((record) => record.type === "water"), "ml");
 
   const noteText = buildSelectedDayNoteSummary(records);
@@ -832,7 +944,7 @@ function renderSelectedDayTotalSummary(dateKey) {
     ["Box", durationOrBlank(boxMinutes)],
     ["Pee", peeCount ? `${peeCount} times (avg. interval: ${formatAverageInterval(records, "pee")})` : ""],
     ["Poop", poopCount ? `${poopCount} times (avg. interval: ${formatAverageInterval(records, "poop")})` : ""],
-    ["Food", valueOrBlank(foodGrams ? `${foodGrams}g consumed` : "")],
+    ["Food", valueOrBlank(foodProgress)],
     ["Water", valueOrBlank(waterMl ? `${countFor("water")} times, ${waterMl}mL` : "")],
     ["Notes", noteText],
   ];
@@ -851,13 +963,19 @@ function renderSelectedDayTotalSummary(dateKey) {
 
 function buildSelectedDayNoteSummary(records) {
   const noteTypes = ["note", "shower", "tooth", "vaccine", "school"];
-  return records
+  const noteItems = records
     .filter((record) => noteTypes.includes(record.type))
     .map((record) => {
       const label = typeConfig[record.type]?.label || record.type;
       const detail = [record.amount, record.note].filter(Boolean).join(" - ");
       return detail ? `${label}: ${detail}` : label;
-    })
+    });
+  const accidentItems = records.filter(isAccidentRecord).map((record) => {
+    const label = typeConfig[record.type]?.label || record.type;
+    const detail = [formatTime(record.time), record.amount, record.note].filter(Boolean).join(" - ");
+    return detail ? `Accident: ${label} - ${detail}` : `Accident: ${label}`;
+  });
+  return [...noteItems, ...accidentItems]
     .join("; ");
 }
 
@@ -870,6 +988,65 @@ function getVetKind(record) {
     return "Regular visit";
   }
   return "Vaccine";
+}
+
+function getFoodKind(record) {
+  const kind = String(record?.foodKind || "").toLowerCase();
+  if (kind === "snack") {
+    return "snack";
+  }
+  if (record?.snackName) {
+    return "snack";
+  }
+  if (/snack/i.test(record?.note || "")) {
+    return "snack";
+  }
+  return "food";
+}
+
+function getFoodKindLabel(record) {
+  return getFoodKind(record) === "snack" ? "Snack" : "Food";
+}
+
+function getSnackName(record) {
+  return getFoodKind(record) === "snack" ? record?.snackName || record?.note || "Snack" : "";
+}
+
+function normalizeProductName(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(josera|dry|dog|puppy|food|kibble|current|type)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactProductName(value) {
+  return normalizeProductName(value).replace(/\s+/g, "");
+}
+
+function productNameMatches(left, right) {
+  const a = compactProductName(left);
+  const b = compactProductName(right);
+  return Boolean(a && b && (a === b || (a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b))));
+}
+
+function getJoseraProductConfig(foodType = state.foodSettings?.type) {
+  const source = foodType || state.foodSettings?.type || "";
+  const match = joseraProducts.find((product) =>
+    [product.key, product.label, ...(product.aliases || [])].some((candidate) => productNameMatches(source, candidate))
+  );
+  return match || joseraProducts[0];
+}
+
+function snackMatchesCurrentFood(record) {
+  if (getFoodKind(record) !== "snack") {
+    return false;
+  }
+  const snack = getSnackName(record);
+  const product = getJoseraProductConfig();
+  return [state.foodSettings?.type, product.label, ...(product.aliases || [])].some((candidate) => productNameMatches(snack, candidate));
 }
 
 function getVetReminderMinutes(record) {
@@ -1039,6 +1216,7 @@ function renderHomeMonthlyAverage() {
   elements.homeMonthlyAverage.innerHTML = `
     <article><span>Pee</span><strong>${escapeHtml(stats.peeText)}</strong></article>
     <article><span>Poop</span><strong>${escapeHtml(stats.poopText)}</strong></article>
+    <article><span>Accident</span><strong>${escapeHtml(stats.accidentText)}</strong></article>
     <article><span>Pee Interval</span><strong>${escapeHtml(stats.peeInterval)}</strong></article>
     <article><span>Poop Interval</span><strong>${escapeHtml(stats.poopInterval)}</strong></article>
     <article><span>Sleep</span><strong>${escapeHtml(stats.sleepPerDay)}/day</strong></article>
@@ -1091,6 +1269,13 @@ function getRecordListMeta(record, dateKey = "") {
   }
   if (record.type === "vaccine") {
     return [record.amount || "Visit", record.note, formatVetReminderText(dateKey, record)].filter(Boolean).join(" - ");
+  }
+  if (record.type === "food") {
+    const detail = getFoodKind(record) === "snack" ? [getSnackName(record), snackMatchesCurrentFood(record) ? "same as current food" : ""].filter(Boolean).join(" - ") : record.note;
+    return [getFoodKindLabel(record), record.amount, detail].filter(Boolean).join(" - ");
+  }
+  if (["pee", "poop"].includes(record.type)) {
+    return [record.accident ? "Accident" : "", record.amount, record.note].filter(Boolean).join(" - ");
   }
   return [record.amount, record.note].filter(Boolean).join(" - ");
 }
@@ -1247,6 +1432,7 @@ function renderInsight() {
   } else {
     elements.growthInsight.textContent = `${weightText} shows a steady recent growth trend.`;
   }
+  updateFoodEstimateDisplay();
 }
 
 function renderQuickLogButtons() {
@@ -1285,7 +1471,7 @@ function handleQuickLog(type) {
   addQuickRecord(type, "", "");
 }
 
-function addQuickRecord(type, amount, note, time = new Date()) {
+function addQuickRecord(type, amount, note, time = new Date(), extra = {}) {
   const dateKey = toKey(time);
   const durationMinutes = timedRecordTypes.includes(type) ? parseDurationMinutes(amount) : 0;
   const record = {
@@ -1294,6 +1480,7 @@ function addQuickRecord(type, amount, note, time = new Date()) {
     time: time.toTimeString().slice(0, 5),
     amount,
     note,
+    ...extra,
   };
   if (durationMinutes) {
     record.startTime = record.time;
@@ -1362,7 +1549,7 @@ function recordFoodNow() {
   const meal = getCurrentMealSetting();
   const amount = meal.amount || "Food";
   const note = [state.foodSettings.type, meal.label].filter(Boolean).join(" - ");
-  addQuickRecord("food", amount, note || "Quick food log");
+  addQuickRecord("food", amount, note || "Quick food log", new Date(), { foodKind: "food" });
 }
 
 function getCurrentMealSetting() {
@@ -1441,6 +1628,13 @@ function formatDurationHoursMinutes(minutes) {
 }
 
 function renderCategory() {
+  if (activeCategory === "accident") {
+    activeCategory = "potty";
+    document.querySelectorAll(".category-tab").forEach((button) => {
+      button.classList.toggle("selected", button.dataset.category === activeCategory);
+    });
+  }
+
   if (activeCategory === "weight") {
     renderGrowthCategory();
     return;
@@ -1454,7 +1648,7 @@ function renderCategory() {
   elements.categoryList.innerHTML = "";
 
   if (!records.length) {
-    const range = activeCategory === "vaccine" ? "yet" : "today";
+    const range = ["accident", "vaccine"].includes(activeCategory) ? "yet" : "today";
     elements.categoryList.innerHTML = `<p class="empty-state">No ${category.label.toLowerCase()} records ${range}.</p>`;
     return;
   }
@@ -1602,7 +1796,9 @@ function saveRecord() {
   }
 
   clearFormAfterSave();
-  maybeRequestNotificationPermission();
+  if (record.type === "vaccine") {
+    maybeRequestNotificationPermission({ allowPrompt: true });
+  }
   persist();
   renderDayView();
 }
@@ -1621,6 +1817,16 @@ function buildRecordFromForm(id) {
     record.amount = elements.vetKind.value || "Visit";
     record.reminderMinutes = getSelectedReminderMinutes(elements.vetReminderMinutes);
   }
+  if (activeType === "food") {
+    record.foodKind = elements.foodKind.value || "food";
+    record.snackName = record.foodKind === "snack" && !elements.snackName.disabled ? elements.snackName.value || "" : "";
+    if (record.foodKind === "snack") {
+      record.note = "";
+    }
+  }
+  if (["pee", "poop"].includes(activeType)) {
+    record.accident = elements.recordAccident.checked;
+  }
   if (timedRecordTypes.includes(activeType)) {
     const startTime = elements.recordStartTime.value || record.time;
     const durationMinutes = Math.max(1, durationFromTimes(startTime, elements.recordEndTime.value) || Number(elements.recordDuration.value) || parseDurationMinutes(record.amount) || 1);
@@ -1638,13 +1844,14 @@ function buildRecordFromForm(id) {
 
 function clearFormAfterSave() {
   elements.recordAmount.value = "";
+  elements.foodKind.value = "food";
+  populateSnackSelect(elements.snackName);
   elements.vetKind.value = "Visit";
   elements.vetReminderMinutes.value = "60";
+  elements.recordAccident.checked = false;
   elements.recordNote.value = "";
-  elements.recordEndTime.value = "";
-  elements.recordDuration.value = "";
-  elements.recordStartTime.value = elements.recordTime.value || new Date().toTimeString().slice(0, 5);
-  updateVetReminderPreview();
+  syncFoodKindFields();
+  resetRecordTimeToNow();
 }
 
 function startEditRecord(record) {
@@ -1655,13 +1862,17 @@ function startEditRecord(record) {
   elements.recordEndTime.value = record.endTime || "";
   elements.recordDuration.value = record.durationMinutes || parseDurationMinutes(record.amount) || "";
   elements.recordAmount.value = record.amount || "";
+  elements.foodKind.value = getFoodKind(record);
+  populateSnackSelect(elements.snackName, getSnackName(record));
   elements.vetKind.value = getVetKind(record);
   elements.vetReminderMinutes.value = String(getVetReminderMinutes(record));
+  elements.recordAccident.checked = Boolean(record.accident);
   elements.recordNote.value = record.note || "";
   document.querySelectorAll(".type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeType);
   });
   updateAmountField();
+  syncFoodKindFields();
   elements.saveRecord.textContent = "Update";
   elements.cancelEditRecord.hidden = false;
   elements.recordAmount.focus();
@@ -1683,7 +1894,9 @@ function updateEditedRecord() {
     }
   }
   syncProfileWeightFromRecords();
-  maybeRequestNotificationPermission();
+  if (record.type === "vaccine") {
+    maybeRequestNotificationPermission({ allowPrompt: true });
+  }
   persist();
   clearEditMode();
   renderDayView();
@@ -1692,9 +1905,12 @@ function updateEditedRecord() {
 function clearEditMode() {
   editingRecordId = null;
   elements.recordAmount.value = "";
+  elements.foodKind.value = "food";
+  populateSnackSelect(elements.snackName);
+  elements.recordAccident.checked = false;
   elements.recordNote.value = "";
-  elements.recordEndTime.value = "";
-  elements.recordDuration.value = "";
+  syncFoodKindFields();
+  resetRecordTimeToNow();
   elements.saveRecord.textContent = "Save";
   elements.cancelEditRecord.hidden = true;
   syncDurationVisibility();
@@ -1715,6 +1931,7 @@ async function addProfilePhotoFromInput(input) {
 function getCategoryRecords(type) {
   const typeMap = {
     potty: ["pee", "poop"],
+    accident: ["pee", "poop"],
     activity: ["play", "train"],
     note: ["note", "shower", "tooth", "vaccine", "school"],
   };
@@ -1722,26 +1939,33 @@ function getCategoryRecords(type) {
   const entries = Object.entries(state.records).flatMap(([date, records]) =>
     records
       .filter((record) => matchedTypes.includes(record.type))
+      .filter((record) => type !== "accident" || isAccidentRecord(record))
       .map((record) => ({ ...record, date }))
   );
 
-  const filtered =
-    type === "vaccine"
-      ? entries
-      : entries.filter((entry) => {
-          if (["potty", "activity", "sleep", "walk", "food", "water", "school", "box", "note"].includes(type)) {
-            return entry.date === toKey(today);
-          }
-          const [year, month] = entry.date.split("-").map(Number);
-          return year === visibleMonth.getFullYear() && month === visibleMonth.getMonth() + 1;
-        });
+  let filtered = entries;
+  if (type === "accident") {
+    filtered = entries.filter((entry) => entry.date >= analyticsStartKey && entry.date <= toKey(today));
+  } else if (type !== "vaccine") {
+    filtered = entries.filter((entry) => {
+      if (["potty", "activity", "sleep", "walk", "food", "water", "school", "box", "note"].includes(type)) {
+        return entry.date === toKey(today);
+      }
+      const [year, month] = entry.date.split("-").map(Number);
+      return year === visibleMonth.getFullYear() && month === visibleMonth.getMonth() + 1;
+    });
+  }
 
-  return filtered.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  const sorted = filtered.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  return type === "accident" ? sorted.reverse() : sorted;
 }
 
 function getCategoryMeta(type) {
   if (type === "potty") {
     return { label: "Pee & Poop" };
+  }
+  if (type === "accident") {
+    return { label: "Accident" };
   }
   if (type === "activity") {
     return { label: "Play & Train" };
@@ -1770,7 +1994,14 @@ function getCategoryForType(type) {
 
 function getCategoryDetail(entry, activeCategoryType = "") {
   const typeLabel = typeConfig[entry.type]?.label || entry.type;
-  if (activeCategoryType === "potty" || activeCategoryType === "activity") {
+  if (activeCategoryType === "potty" || activeCategoryType === "accident") {
+    return {
+      primary: [entry.amount || formatTime(entry.time), typeLabel, entry.accident ? "Accident" : ""].filter(Boolean).join(" - "),
+      secondary: entry.note,
+    };
+  }
+
+  if (activeCategoryType === "activity") {
     return {
       primary: [entry.amount || formatTime(entry.time), typeLabel].filter(Boolean).join(" - "),
       secondary: entry.note,
@@ -1802,6 +2033,14 @@ function getCategoryDetail(entry, activeCategoryType = "") {
     return {
       primary: entry.amount || "Weight check",
       secondary: entry.note,
+    };
+  }
+
+  if (entry.type === "food") {
+    const detail = getFoodKind(entry) === "snack" ? [getSnackName(entry), snackMatchesCurrentFood(entry) ? "same as current food" : ""].filter(Boolean).join(" - ") : entry.note;
+    return {
+      primary: [entry.amount || "Food", getFoodKindLabel(entry)].join(" - "),
+      secondary: detail,
     };
   }
 
@@ -1863,6 +2102,7 @@ function renderMonthStats(endDate, stats) {
       <h3>${endDate.toLocaleDateString("en", { month: "short" })}</h3>
       <p>Pee ${stats.peeText}</p>
       <p>Poop ${stats.poopText}</p>
+      <p>Accident ${stats.accidentText}</p>
       <p>Pee interval ${stats.peeInterval} - Poop interval ${stats.poopInterval}</p>
       <p>Sleep ${stats.sleepPerDay}/day - Walk ${stats.walkPerDay}/day</p>
       <p>Box ${stats.boxPerDay}/day</p>
@@ -1886,6 +2126,7 @@ function renderStatCards(stats) {
   const cards = [
     ["Pee", stats.peeText],
     ["Poop", stats.poopText],
+    ["Accident", stats.accidentText],
     ["Pee Interval", stats.peeInterval],
     ["Poop Interval", stats.poopInterval],
     ["Sleep", `${stats.sleepPerDay}/day`],
@@ -1912,6 +2153,7 @@ function calculateStatsForRange(startKey, endKey) {
     .flatMap(([date, entries]) => entries.map((entry) => ({ ...entry, date })));
   const days = Math.max(1, countDaysInclusive(effectiveStartKey, endKey));
   const count = (type) => records.filter((record) => record.type === type).length;
+  const accidentCount = records.filter(isAccidentRecord).length;
   const duration = (type) => records.filter((record) => record.type === type).reduce((total, record) => total + getRecordDuration(record), 0);
   const weights = records
     .filter((record) => record.type === "weight")
@@ -1925,14 +2167,50 @@ function calculateStatsForRange(startKey, endKey) {
     poopTotal: count("poop"),
     peePerDay: formatAverage(count("pee") / days),
     poopPerDay: formatAverage(count("poop") / days),
+    accidentPerDay: formatAverage(accidentCount / days),
     peeText: formatTimesPerDay(count("pee"), days),
     poopText: formatTimesPerDay(count("poop"), days),
+    accidentText: formatTimesPerDay(accidentCount, days),
     peeInterval: formatAverageInterval(records, "pee"),
     poopInterval: formatAverageInterval(records, "poop"),
     sleepPerDay: formatDuration(duration("sleep") / days),
     walkPerDay: formatDuration(duration("walk") / days),
     boxPerDay: formatDuration(duration("box") / days),
     weightText: latestWeight ? `${latestWeight.value.toFixed(1)}kg${firstWeight && firstWeight !== latestWeight ? ` from ${firstWeight.value.toFixed(1)}kg` : ""}` : "No data",
+  };
+}
+
+function isAccidentRecord(record) {
+  return ["pee", "poop"].includes(record?.type) && Boolean(record.accident);
+}
+
+function getAccidentRecordsUntil(endKey = toKey(today)) {
+  return Object.entries(state.records || {})
+    .filter(([date]) => date >= analyticsStartKey && date <= endKey)
+    .flatMap(([date, records]) =>
+      (records || [])
+        .filter(isAccidentRecord)
+        .map((record) => ({ ...record, date }))
+    )
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+}
+
+function getWeekStartKey(dateKey = toKey(today)) {
+  const date = parseDateKey(dateKey) || today;
+  const start = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  return toKey(start);
+}
+
+function getAccidentStats(endKey = toKey(today)) {
+  const accidents = getAccidentRecordsUntil(endKey);
+  const weekStart = maxDateKey(getWeekStartKey(endKey), analyticsStartKey);
+  const weeks = Math.max(1, Math.ceil(countDaysInclusive(analyticsStartKey, endKey) / 7));
+  return {
+    total: accidents.length,
+    thisWeek: accidents.filter((record) => record.date >= weekStart && record.date <= endKey).length,
+    perWeek: accidents.length / weeks,
   };
 }
 
@@ -1969,11 +2247,19 @@ function renderDailySummary(type) {
   if (type === "potty") {
     const pee = records.filter((record) => record.type === "pee").length;
     const poop = records.filter((record) => record.type === "poop").length;
-    parts.push(`${pee} pee`, `${poop} poop`);
-    parts.push(`Pee interval ${formatAverageInterval(records, "pee")}`);
-    parts.push(`Poop interval ${formatAverageInterval(records, "poop")}`);
+    const stats = getAccidentStats(dateKey);
+    return renderSummaryRows([
+      [`${pee} pee`, `${poop} poop`],
+      [`Pee interval ${formatAverageInterval(records, "pee")}`, `Poop interval ${formatAverageInterval(records, "poop")}`],
+      [`${stats.thisWeek} accidents this week`, `${formatAverage(stats.perWeek)} accidents per week`],
+    ]);
+  } else if (type === "accident") {
+    const stats = getAccidentStats();
+    parts.push(`${stats.total} accidents total`);
+    parts.push(`${stats.thisWeek} this week`);
+    parts.push(`${formatAverage(stats.perWeek)} per week`);
   } else if (type === "food") {
-    parts.push(`${sumAmount(records, "g")}g consumed`);
+    parts.push(formatFoodProgress(records, dateKey));
   } else if (type === "water") {
     parts.push(`${records.length} times today`);
     parts.push(`${sumAmount(records, "ml")}mL total`);
@@ -1996,17 +2282,30 @@ function renderDailySummary(type) {
     parts.push(latest ? `Latest ${latest.value.toFixed(1)}kg` : "No weight yet");
   }
 
-  return parts.length ? parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("") : "<span>No records today</span>";
+  return parts.length ? renderSummaryChips(parts) : "<span>No records today</span>";
+}
+
+function renderSummaryChips(parts) {
+  return parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("");
+}
+
+function renderSummaryRows(rows) {
+  return rows
+    .map((row) => `<div class="category-summary-row">${renderSummaryChips(row)}</div>`)
+    .join("");
 }
 
 function getRecordsForSummary(dateKey, type) {
   const typeMap = {
     potty: ["pee", "poop"],
+    accident: ["pee", "poop"],
     activity: ["play", "train"],
     note: ["note", "shower", "tooth", "vaccine", "school"],
   };
   const matchedTypes = typeMap[type] || [type];
-  return (state.records[dateKey] || []).filter((record) => matchedTypes.includes(record.type));
+  return (state.records[dateKey] || [])
+    .filter((record) => matchedTypes.includes(record.type))
+    .filter((record) => type !== "accident" || isAccidentRecord(record));
 }
 
 function sumAmount(records, unit) {
@@ -2027,6 +2326,265 @@ function parseAmountForUnit(value, unit) {
   }
   const plain = text.match(/(\d+(?:[.,]\d+)?)/);
   return plain ? Number(plain[1].replace(",", ".")) : 0;
+}
+
+function getFoodSummary(records, dateKey = toKey(today)) {
+  const foodRecords = records.filter((record) => record.type === "food");
+  const mealRecords = foodRecords.filter((record) => getFoodKind(record) !== "snack");
+  const snackRecords = foodRecords.filter((record) => getFoodKind(record) === "snack");
+  const countedSnackRecords = snackRecords.filter(snackMatchesCurrentFood);
+  const consumed = sumAmount(mealRecords, "g") + sumAmount(countedSnackRecords, "g");
+  const snacks = sumAmount(snackRecords, "g");
+  const countedSnacks = sumAmount(countedSnackRecords, "g");
+  const needed = getFoodDailyTarget(dateKey);
+  return { consumed, snacks, countedSnacks, needed };
+}
+
+function formatFoodProgress(records, dateKey = toKey(today)) {
+  const { consumed, snacks, countedSnacks, needed } = getFoodSummary(records, dateKey);
+  const progress = needed ? `${consumed}g / ${needed}g consumed` : `${consumed}g consumed`;
+  if (!snacks) {
+    return progress;
+  }
+  return countedSnacks ? `${progress} (${countedSnacks}g matching snack counted)` : `${progress} (${snacks}g snack separate)`;
+}
+
+function getFoodDailyTarget(dateKey = toKey(today)) {
+  const manualTarget = Number(state.foodSettings?.dailyTargetGrams);
+  const recommendation = getJoseraRecommendation(dateKey);
+  if (state.foodSettings?.autoTarget && recommendation) {
+    return recommendation.targetGrams;
+  }
+  if (Number.isFinite(manualTarget) && manualTarget > 0) {
+    return Math.round(manualTarget);
+  }
+  return recommendation ? recommendation.targetGrams : 0;
+}
+
+function refreshFoodRecommendationIfNeeded(force = false) {
+  updateEstimatedAdultWeightSetting();
+  if (!state.foodSettings.autoTarget) {
+    renderFoodRecommendationStatus();
+    return false;
+  }
+  const recommendation = getJoseraRecommendation(toKey(today));
+  if (!recommendation) {
+    renderFoodRecommendationStatus();
+    return false;
+  }
+  const weekKey = getWeekKey(today);
+  const recommendationKey = `${weekKey}-${recommendation.product.key}-${recommendation.ageWeeks}w-${recommendation.adultWeightKg}kg-${recommendation.targetGrams}g`;
+  const productLabel = recommendation.product.label;
+  let changed = false;
+  if (
+    force ||
+    state.foodSettings.recommendationWeek !== recommendationKey ||
+    Number(state.foodSettings.dailyTargetGrams) !== recommendation.targetGrams
+  ) {
+    state.foodSettings.dailyTargetGrams = recommendation.targetGrams;
+    state.foodSettings.recommendationWeek = recommendationKey;
+    state.foodSettings.recommendationRange = `${recommendation.targetGrams}g`;
+    state.foodSettings.recommendationSource = `Josera ${productLabel} calculator`;
+    if (elements.foodDailyTarget) {
+      elements.foodDailyTarget.value = recommendation.targetGrams;
+    }
+    changed = true;
+  }
+  renderFoodRecommendationStatus();
+  return changed;
+}
+
+function renderFoodRecommendationStatus() {
+  if (!elements.foodRecommendationStatus) {
+    return;
+  }
+  updateFoodEstimateDisplay();
+  const recommendation = getJoseraRecommendation(toKey(today));
+  if (!recommendation) {
+    elements.foodRecommendationStatus.textContent = "Josera recommendation unavailable for the current age/weight setting.";
+    return;
+  }
+  const mode = state.foodSettings.autoTarget ? "Auto weekly" : "Manual";
+  const estimate = getAdultWeightEstimate();
+  const estimateText = estimate ? ` Growth estimate: ${estimate.value.toFixed(1)}kg${state.foodSettings.useEstimatedAdultWeight ? " used" : ""}.` : "";
+  const parsedText =
+    recommendation.enteredAdultWeightKg !== recommendation.adultWeightKg
+      ? ` Calculator uses ${recommendation.adultWeightKg}kg from ${recommendation.enteredAdultWeightKg.toFixed(1)}kg.`
+      : "";
+  elements.foodRecommendationStatus.innerHTML = `${escapeHtml(mode)} target: ${escapeHtml(String(getFoodDailyTarget()))}g/day. Josera ${escapeHtml(recommendation.product.label)} calculator estimate for ${escapeHtml(String(recommendation.ageWeeks))} weeks and ${escapeHtml(String(recommendation.adultWeightKg))}kg expected grown weight: ${escapeHtml(String(recommendation.targetGrams))}g/day.${escapeHtml(parsedText)}${escapeHtml(estimateText)} <a href="${joseraFeedingSourceUrl}" target="_blank" rel="noreferrer">Josera calculator</a> - <a href="${recommendation.product.guideUrl}" target="_blank" rel="noreferrer">${escapeHtml(recommendation.product.label)} guide</a>`;
+}
+
+function getJoseraRecommendation(dateKey = toKey(today)) {
+  const ageWeeks = getJoseraCalculatorAgeWeeks(dateKey);
+  const enteredAdultWeightKg = getFoodTargetAdultWeight();
+  const adultWeightKg = getJoseraCalculatorAdultWeight(enteredAdultWeightKg);
+  const product = getJoseraProductConfig();
+  if (!ageWeeks || !adultWeightKg) {
+    return null;
+  }
+  const grownPercent = getJoseraGrowthPercent(ageWeeks, adultWeightKg);
+  const currentWeightKg = adultWeightKg * (grownPercent / 100);
+  const energyFactor = getJoseraJuniorEnergyFactor(grownPercent);
+  const targetGrams = Math.round((70 * energyFactor * currentWeightKg ** 0.75) / (product.kcalPerKg / 1000));
+  return {
+    product,
+    adultWeightKg,
+    enteredAdultWeightKg,
+    ageWeeks,
+    bucketLabel: `${ageWeeks} weeks`,
+    currentWeightKg: Number(currentWeightKg.toFixed(1)),
+    grownPercent: Number(grownPercent.toFixed(1)),
+    kcalPerKg: product.kcalPerKg,
+    min: targetGrams,
+    max: targetGrams,
+    midpoint: targetGrams,
+    targetGrams,
+  };
+}
+
+function getJoseraCalculatorAgeWeeks(dateKey) {
+  const birthday = parseDateKey(state.profile.birthday);
+  const date = parseDateKey(dateKey);
+  if (!birthday || !date) {
+    return 8;
+  }
+  const ageDays = Math.max(0, Math.ceil((date - birthday) / 86400000));
+  return Math.max(8, Math.min(52, Math.ceil(ageDays / 7)));
+}
+
+function getJoseraCalculatorAdultWeight(weightKg) {
+  const value = Number(weightKg) || 30;
+  return Math.max(5, Math.min(90, Math.trunc(value)));
+}
+
+function getJoseraGrowthClass(adultWeightKg) {
+  if (adultWeightKg <= 7) {
+    return 7;
+  }
+  if (adultWeightKg <= 15) {
+    return 15;
+  }
+  if (adultWeightKg <= 27.5) {
+    return 27.5;
+  }
+  if (adultWeightKg <= 47.5) {
+    return 47.5;
+  }
+  return "class5";
+}
+
+function getJoseraGrowthPercent(ageWeeks, adultWeightKg) {
+  const model = joseraGrowthModel[getJoseraGrowthClass(adultWeightKg)];
+  const percent = model.a * Math.log(ageWeeks) + model.b;
+  return Math.max(0, Math.min(100, percent));
+}
+
+function getJoseraJuniorEnergyFactor(grownPercent) {
+  if (grownPercent <= 40) {
+    return 2.9;
+  }
+  if (grownPercent <= 80) {
+    return 2.87 - ((grownPercent - 40) / 40) * (2.87 - 2);
+  }
+  return 2;
+}
+
+function getFoodTargetAdultWeight() {
+  const estimate = getAdultWeightEstimate();
+  if (state.foodSettings?.useEstimatedAdultWeight && estimate) {
+    return estimate.value;
+  }
+  return Number(state.foodSettings?.expectedAdultWeightKg) || 30;
+}
+
+function updateEstimatedAdultWeightSetting() {
+  const estimate = getAdultWeightEstimate();
+  state.foodSettings.estimatedAdultWeightKg = estimate ? Number(estimate.value.toFixed(1)) : 0;
+  state.foodSettings.estimatedAdultWeightConfidence = estimate?.confidence || "";
+  return estimate;
+}
+
+function updateFoodEstimateDisplay() {
+  if (!elements.foodEstimatedWeight) {
+    return;
+  }
+  const estimate = updateEstimatedAdultWeightSetting();
+  elements.foodEstimatedWeight.value = estimate ? `${estimate.value.toFixed(1)} kg (${estimate.confidence})` : "Need weight record";
+}
+
+function getAdultWeightEstimate() {
+  const estimates = getWeightRecords()
+    .map((record) => {
+      const ageMonths = getAgeMonthsOnDate(record.date);
+      const ratio = getLargeBreedGrowthRatio(ageMonths);
+      if (!ratio || ageMonths < 1.3 || ageMonths > 18) {
+        return null;
+      }
+      const value = record.value / ratio;
+      if (!Number.isFinite(value) || value < 5 || value > 90) {
+        return null;
+      }
+      return { value, date: record.date, ageMonths };
+    })
+    .filter(Boolean)
+    .slice(-6);
+
+  if (!estimates.length) {
+    return null;
+  }
+
+  const weightedTotal = estimates.reduce((total, estimate, index) => total + estimate.value * (index + 1), 0);
+  const weightTotal = estimates.reduce((total, estimate, index) => total + index + 1, 0);
+  const value = weightedTotal / weightTotal;
+  const values = estimates.map((estimate) => estimate.value);
+  const spread = Math.max(...values) - Math.min(...values);
+  const confidence = estimates.length >= 4 && spread < 6 ? "medium" : estimates.length >= 2 ? "early trend" : "early";
+  return { value, confidence, records: estimates.length };
+}
+
+function getLargeBreedGrowthRatio(ageMonths) {
+  const curve = [
+    [1.5, 0.16],
+    [2, 0.22],
+    [3, 0.34],
+    [4, 0.45],
+    [5, 0.56],
+    [6, 0.66],
+    [8, 0.78],
+    [10, 0.88],
+    [12, 0.95],
+    [18, 1],
+  ];
+  const age = Math.max(1.5, Math.min(18, ageMonths || 1.5));
+  for (let index = 0; index < curve.length - 1; index += 1) {
+    const [fromAge, fromRatio] = curve[index];
+    const [toAge, toRatio] = curve[index + 1];
+    if (age >= fromAge && age <= toAge) {
+      const progress = (age - fromAge) / (toAge - fromAge);
+      return fromRatio + progress * (toRatio - fromRatio);
+    }
+  }
+  return 1;
+}
+
+function getAgeMonthsOnDate(dateKey) {
+  const birthday = parseDateKey(state.profile.birthday);
+  const date = parseDateKey(dateKey);
+  if (!birthday || !date) {
+    return 2;
+  }
+  return Math.max(0, (date - birthday) / 2629800000);
+}
+
+function getWeekKey(date) {
+  const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = (copy.getDay() + 6) % 7;
+  copy.setDate(copy.getDate() - day + 3);
+  const firstThursday = new Date(copy.getFullYear(), 0, 4);
+  const firstDay = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDay + 3);
+  const week = 1 + Math.round((copy - firstThursday) / 604800000);
+  return `${copy.getFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
 function formatAverageInterval(records, type) {
@@ -2097,6 +2655,13 @@ function hydrateProfileForm() {
   elements.enableSchoolAlarm.textContent = state.settings.schoolAlarmEnabled ? "On" : "Enable";
   elements.enableFoodAlarm.textContent = state.settings.foodAlarmEnabled ? "On" : "Enable";
   elements.foodType.value = state.foodSettings.type;
+  if (document.activeElement !== elements.snackList) {
+    elements.snackList.value = getSnackOptions().join("\n");
+  }
+  elements.foodDailyTarget.value = state.foodSettings.dailyTargetGrams || "";
+  elements.foodExpectedWeight.value = state.foodSettings.expectedAdultWeightKg || 30;
+  elements.foodUseEstimatedWeight.checked = Boolean(state.foodSettings.useEstimatedAdultWeight);
+  elements.foodAutoTarget.checked = Boolean(state.foodSettings.autoTarget);
   elements.foodReminderMinutes.value = state.foodSettings.reminderMinutes;
   elements.foodTimeMorning.value = state.foodTimes.morning;
   elements.foodTimeAfternoon.value = state.foodTimes.afternoon;
@@ -2104,6 +2669,9 @@ function hydrateProfileForm() {
   elements.foodAmountMorning.value = state.foodSettings.amounts.morning;
   elements.foodAmountAfternoon.value = state.foodSettings.amounts.afternoon;
   elements.foodAmountEvening.value = state.foodSettings.amounts.evening;
+  populateSnackSelect(elements.snackName, elements.snackName.value);
+  populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
+  renderFoodRecommendationStatus();
   elements.syncCode.value = state.sync.code;
   elements.firebaseConfig.value = state.sync.firebaseConfig;
   renderSyncStatus(state.sync.lastSync ? `Last sync: ${state.sync.lastSync}` : "Use the same sync code and Firebase config on each phone. Auto-sync runs after edits.");
@@ -2130,10 +2698,22 @@ function syncProfileFromForm() {
   state.foodTimes.afternoon = elements.foodTimeAfternoon.value;
   state.foodTimes.evening = elements.foodTimeEvening.value;
   state.foodSettings.type = elements.foodType.value.trim();
+  const nextSnacks = normalizeSnackList(elements.snackList.value);
+  if (JSON.stringify(nextSnacks) !== JSON.stringify(normalizeSnackList(state.foodSettings.snacks))) {
+    state.foodSettings.snacksUpdatedAt = new Date().toISOString();
+  }
+  state.foodSettings.snacks = nextSnacks;
+  populateSnackSelect(elements.snackName, elements.snackName.value);
+  populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
+  state.foodSettings.dailyTargetGrams = Math.max(0, Number(elements.foodDailyTarget.value) || 0);
+  state.foodSettings.expectedAdultWeightKg = Math.max(5, Number(elements.foodExpectedWeight.value) || 30);
+  state.foodSettings.useEstimatedAdultWeight = elements.foodUseEstimatedWeight.checked;
+  state.foodSettings.autoTarget = elements.foodAutoTarget.checked;
   state.foodSettings.reminderMinutes = Math.max(0, Math.min(180, Number(elements.foodReminderMinutes.value) || 0));
   state.foodSettings.amounts.morning = elements.foodAmountMorning.value.trim();
   state.foodSettings.amounts.afternoon = elements.foodAmountAfternoon.value.trim();
   state.foodSettings.amounts.evening = elements.foodAmountEvening.value.trim();
+  refreshFoodRecommendationIfNeeded();
 }
 
 function getProfileInputs() {
@@ -2155,6 +2735,11 @@ function getProfileInputs() {
     elements.rabiesDate,
     elements.rabiesValidUntil,
     elements.foodType,
+    elements.snackList,
+    elements.foodDailyTarget,
+    elements.foodExpectedWeight,
+    elements.foodUseEstimatedWeight,
+    elements.foodAutoTarget,
     elements.foodReminderMinutes,
     elements.foodTimeMorning,
     elements.foodTimeAfternoon,
@@ -2327,13 +2912,15 @@ function getFoodReminderMinutes() {
   return Number.isFinite(minutes) ? Math.max(0, Math.min(180, Math.round(minutes))) : 5;
 }
 
-function maybeRequestNotificationPermission() {
+function maybeRequestNotificationPermission({ allowPrompt = false } = {}) {
   if (!anyAlarmEnabled() || !("Notification" in window)) {
     return;
   }
 
   if (Notification.permission === "default") {
-    Notification.requestPermission().then(() => showDueVaccinationNotification());
+    if (allowPrompt) {
+      Notification.requestPermission().then(() => showDueVaccinationNotification());
+    }
     return;
   }
 
@@ -2408,14 +2995,18 @@ function updateInstallStatus(message) {
 
 function getSyncPayload() {
   syncProfileWeightFromRecords();
+  return buildSyncPayload(state);
+}
+
+function buildSyncPayload(sourceState) {
   const syncState = {
-    ...state,
+    ...sourceState,
     photos: [],
-    activeSessions: normalizeActiveSessions(state.activeSessions),
-    stoppedSessionIds: state.stoppedSessionIds || [],
+    activeSessions: normalizeActiveSessions(sourceState.activeSessions),
+    stoppedSessionIds: sourceState.stoppedSessionIds || [],
     sync: {
-      code: state.sync.code,
-      lastSync: state.sync.lastSync,
+      code: sourceState.sync?.code || state.sync.code,
+      lastSync: sourceState.sync?.lastSync || state.sync.lastSync,
       firebaseConfig: "",
     },
   };
@@ -2454,7 +3045,7 @@ function applySyncedPayload(payload) {
 }
 
 function exportExcelData() {
-  const rows = [["Date", "Type", "Time", "Start", "End", "Duration minutes", "Amount", "Note"]];
+  const rows = [["Date", "Type", "Food kind", "Snack", "Time", "Start", "End", "Duration minutes", "Amount", "Accident", "Note"]];
   Object.entries(state.records)
     .sort(([a], [b]) => a.localeCompare(b))
     .forEach(([date, records]) => {
@@ -2465,11 +3056,14 @@ function exportExcelData() {
           rows.push([
             date,
             typeConfig[record.type]?.label || record.type,
+            record.type === "food" ? getFoodKindLabel(record) : "",
+            record.type === "food" && getFoodKind(record) === "snack" ? getSnackName(record) : "",
             record.time || "",
             record.startTime || "",
             record.endTime || "",
             getRecordDuration(record) || "",
             record.amount || "",
+            record.accident ? "yes" : "",
             record.note || "",
           ]);
         });
@@ -2534,8 +3128,8 @@ function importExcelRows(rows) {
     throw new Error("no record rows found.");
   }
   const headers = rows[0].map((header) => header.trim().toLowerCase());
-  const required = ["date", "type", "time", "start", "end", "duration minutes", "amount", "note"];
-  const indexes = Object.fromEntries(required.map((header) => [header, headers.indexOf(header)]));
+  const columns = ["date", "type", "food kind", "snack", "snack counts as food", "time", "start", "end", "duration minutes", "amount", "accident", "note"];
+  const indexes = Object.fromEntries(columns.map((header) => [header, headers.indexOf(header)]));
   if (["date", "type", "time"].some((header) => indexes[header] < 0)) {
     throw new Error("CSV must use the exported columns.");
   }
@@ -2557,6 +3151,19 @@ function importExcelRows(rows) {
       amount: row[indexes.amount] || "",
       note: row[indexes.note] || "",
     };
+    if (type === "food" && indexes["food kind"] >= 0) {
+      record.foodKind = normalizeFoodKind(row[indexes["food kind"]]);
+      if (record.foodKind === "snack" && indexes.snack >= 0) {
+        record.snackName = String(row[indexes.snack] || "").trim();
+        if (record.snackName) {
+          state.foodSettings.snacks = normalizeSnackList([...(state.foodSettings.snacks || []), record.snackName]);
+          state.foodSettings.snacksUpdatedAt = new Date().toISOString();
+        }
+      }
+    }
+    if (["pee", "poop"].includes(type) && indexes.accident >= 0) {
+      record.accident = normalizeImportBoolean(row[indexes.accident]);
+    }
     if (timedRecordTypes.includes(type)) {
       record.startTime = startTime || record.time;
       record.durationMinutes = Math.max(1, duration || parseDurationMinutes(record.amount) || 1);
@@ -2635,6 +3242,14 @@ function normalizeImportType(value) {
   return Object.keys(typeConfig).find((type) => type === normalized || typeConfig[type].label.toLowerCase() === normalized) || "";
 }
 
+function normalizeFoodKind(value) {
+  return String(value || "").trim().toLowerCase() === "snack" ? "snack" : "food";
+}
+
+function normalizeImportBoolean(value) {
+  return /^(yes|y|true|1|accident)$/i.test(String(value || "").trim());
+}
+
 function normalizeImportDate(value) {
   const text = String(value || "").trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
@@ -2669,6 +3284,8 @@ function isDuplicateImportedRecord(date, record) {
       entry.type === record.type &&
       entry.time === record.time &&
       (entry.amount || "") === (record.amount || "") &&
+      Boolean(entry.accident) === Boolean(record.accident) &&
+      (entry.snackName || "") === (record.snackName || "") &&
       (entry.note || "") === (record.note || "")
   );
 }
@@ -2695,10 +3312,9 @@ async function pushFirebaseSync() {
   renderSyncStatus("Pushing to Firebase...");
   try {
     const services = await getFirebaseServices(settings);
-    await services.setDoc(services.doc(services.db, "puppy_books", state.sync.code), {
-      bookData: getSyncPayload(),
-      updatedAt: new Date().toISOString(),
-    });
+    const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    const payload = await writeMergedFirebasePayload(services, ref);
+    await verifyFirebaseWrite(services, ref, payload);
     state.sync.lastSync = new Date().toLocaleString();
     persist();
     clearFirebaseRetry();
@@ -2750,14 +3366,8 @@ async function autoFirebaseSync() {
     }
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    const snapshot = await services.getDoc(ref);
-    if (snapshot.exists()) {
-      mergeSyncedPayload(snapshot.data().bookData);
-    }
-    await services.setDoc(ref, {
-      bookData: getSyncPayload(),
-      updatedAt: new Date().toISOString(),
-    });
+    const payload = await writeMergedFirebasePayload(services, ref);
+    await verifyFirebaseWrite(services, ref, payload);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
     clearFirebaseRetry();
@@ -2791,6 +3401,97 @@ function clearFirebaseRetry() {
   firebaseRetryCount = 0;
   window.clearTimeout(firebaseRetryTimer);
   firebaseRetryTimer = null;
+}
+
+async function writeMergedFirebasePayload(services, ref) {
+  let writtenPayload = null;
+  await services.runTransaction(services.db, async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    let mergedState = makeJsonSafe(state);
+    if (snapshot.exists()) {
+      const remoteState = migrateState(getPayloadData(snapshot.data().bookData));
+      mergedState = mergeStates(makeJsonSafe(state), remoteState);
+    }
+    writtenPayload = buildSyncPayload(mergedState);
+    transaction.set(ref, {
+      bookData: writtenPayload,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  if (!writtenPayload) {
+    throw new Error("Firebase transaction did not prepare data");
+  }
+  mergeSyncedPayload(writtenPayload);
+  return writtenPayload;
+}
+
+async function verifyFirebaseWrite(services, ref, expectedPayload) {
+  const snapshot = await services.getDoc(ref);
+  if (!snapshot.exists()) {
+    throw new Error("Firebase write verification failed: puppy book was not found after push");
+  }
+  const remotePayload = snapshot.data().bookData;
+  const missing = findMissingSyncData(expectedPayload, remotePayload);
+  if (missing.length) {
+    throw new Error(`Firebase write verification failed: missing ${missing.slice(0, 4).join(", ")}`);
+  }
+}
+
+function findMissingSyncData(expectedPayload, remotePayload) {
+  const expected = getPayloadData(expectedPayload);
+  const remote = getPayloadData(remotePayload);
+  const missing = [];
+  const remoteRecordSignatures = new Set(getRecordSignatures(remote.records || {}));
+  getRecordSignatures(expected.records || {}).forEach((signature) => {
+    if (!remoteRecordSignatures.has(signature)) {
+      missing.push(`record ${signature.split("|")[0]}`);
+    }
+  });
+  const remoteSessions = new Set(getActiveSessionSignatures(remote.activeSessions || {}));
+  getActiveSessionSignatures(expected.activeSessions || {}).forEach((signature) => {
+    if (!remoteSessions.has(signature)) {
+      missing.push(`active ${signature.split("|")[0]}`);
+    }
+  });
+  const remoteStopped = new Set(remote.stoppedSessionIds || []);
+  (expected.stoppedSessionIds || []).forEach((id) => {
+    if (!remoteStopped.has(id)) {
+      missing.push(`stopped ${id}`);
+    }
+  });
+  return missing;
+}
+
+function getPayloadData(payload) {
+  return payload?.data || payload || {};
+}
+
+function getRecordSignatures(records) {
+  return Object.entries(records || {}).flatMap(([date, list]) =>
+    (list || []).map((record) =>
+      [
+        record.id || "",
+        date,
+        record.type || "",
+        record.time || "",
+        record.amount || "",
+        record.note || "",
+        record.startTime || "",
+        record.endTime || "",
+        record.durationMinutes || 0,
+        record.reminderMinutes || 0,
+        record.foodKind || "",
+        record.snackName || "",
+        record.accident ? "1" : "0",
+      ].join("|")
+    )
+  );
+}
+
+function getActiveSessionSignatures(activeSessions) {
+  return Object.entries(normalizeActiveSessions(activeSessions || {})).map(([type, session]) =>
+    [session.id || "", type, session.start || "", session.updatedAt || ""].join("|")
+  );
 }
 
 function hasFirebaseSettings() {
@@ -2903,6 +3604,11 @@ function mergeStates(local, remote) {
       : Number(remote.foodSettings?.reminderMinutes) || 5,
     amounts: { ...remote.foodSettings?.amounts, ...local.foodSettings?.amounts },
   };
+  const localSnackTime = Date.parse(local.foodSettings?.snacksUpdatedAt || "") || 0;
+  const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
+  const snackSource = remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
+  merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
+  merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
   merged.settings = { ...remote.settings, ...local.settings };
   merged.vaccination = { ...remote.vaccination, ...local.vaccination };
   merged.sync = { ...remote.sync, ...local.sync };
@@ -3100,8 +3806,8 @@ async function getFirebaseServices(config) {
     projectId: config.projectId,
     db: firestoreModule.getFirestore(app),
     doc: firestoreModule.doc,
-    setDoc: firestoreModule.setDoc,
     getDoc: firestoreModule.getDoc,
+    runTransaction: firestoreModule.runTransaction,
   };
   return firebaseServices;
 }
@@ -3192,16 +3898,112 @@ function createId() {
   return `record-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function getCurrentTimeValue() {
+  return new Date().toTimeString().slice(0, 5);
+}
+
+function resetRecordTimeToNow() {
+  const now = getCurrentTimeValue();
+  elements.recordTime.value = now;
+  elements.recordStartTime.value = now;
+  elements.recordEndTime.value = "";
+  elements.recordDuration.value = "";
+  updateVetReminderPreview();
+}
+
+function resetCalendarEditorTimeToNow() {
+  const now = getCurrentTimeValue();
+  elements.calendarEditorTime.value = now;
+  elements.calendarEditorStartTime.value = now;
+  elements.calendarEditorEndTime.value = "";
+  elements.calendarEditorDuration.value = "";
+  updateCalendarVetReminderPreview();
+}
+
+function syncFoodKindFields() {
+  const isSnack = activeType === "food" && elements.foodKind.value === "snack";
+  elements.snackNameField.hidden = !isSnack;
+  populateSnackSelect(elements.snackName, elements.snackName.value);
+  if (isSnack) {
+    elements.recordNote.value = "";
+  }
+  elements.recordNote.placeholder = isSnack ? "" : notePlaceholder;
+}
+
+function syncCalendarFoodKindFields() {
+  const isSnack = activeCalendarType === "food" && elements.calendarFoodKind.value === "snack";
+  elements.calendarSnackNameField.hidden = !isSnack;
+  populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
+  if (isSnack) {
+    elements.calendarEditorNote.value = "";
+  }
+  elements.calendarEditorNote.placeholder = isSnack ? "" : notePlaceholder;
+}
+
+function populateSnackSelect(select, preferred = "") {
+  if (!select) {
+    return;
+  }
+  const snacks = getSnackOptions();
+  const normalizedPreferred = String(preferred || "").trim();
+  const options = snacks.length
+    ? normalizedPreferred && !snacks.includes(normalizedPreferred)
+      ? [normalizedPreferred, ...snacks]
+      : snacks
+    : normalizedPreferred
+      ? [normalizedPreferred]
+      : ["Add snacks in settings"];
+  select.innerHTML = options.map((snack) => `<option value="${escapeHtml(snack)}">${escapeHtml(snack)}</option>`).join("");
+  select.disabled = !snacks.length && !normalizedPreferred;
+  if (normalizedPreferred && options.includes(normalizedPreferred)) {
+    select.value = normalizedPreferred;
+  } else {
+    select.value = snacks[0] || "";
+  }
+}
+
+function getSnackOptions() {
+  return normalizeSnackList(state.foodSettings?.snacks);
+}
+
+function normalizeSnackList(value) {
+  const raw = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
+  const seen = new Set();
+  return raw
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 30);
+}
+
 function updateAmountField() {
   elements.amountField.childNodes[0].nodeValue = `${typeConfig[activeType].amount} `;
   elements.recordAmount.placeholder = typeConfig[activeType].placeholder;
   elements.amountField.hidden = activeType === "vaccine";
+  elements.foodKindField.hidden = activeType !== "food";
   elements.vetKindField.hidden = activeType !== "vaccine";
   elements.vetReminderField.hidden = activeType !== "vaccine";
   updateVetReminderPreview();
+  syncFoodKindFields();
+  syncAccidentFieldVisibility();
   syncDurationVisibility();
   if (timedRecordTypes.includes(activeType)) {
     elements.recordStartTime.value = elements.recordStartTime.value || elements.recordTime.value || new Date().toTimeString().slice(0, 5);
+  }
+}
+
+function syncAccidentFieldVisibility() {
+  const show = ["pee", "poop"].includes(activeType);
+  elements.accidentField.hidden = !show;
+  if (!show) {
+    elements.recordAccident.checked = false;
   }
 }
 
@@ -3305,7 +4107,22 @@ function loadState() {
     school: { name: "", trainer: "", contact: "", notes: "" },
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
-    foodSettings: { type: "Puppy food", reminderMinutes: 5, amounts: { morning: "110g", afternoon: "", evening: "120g" } },
+    foodSettings: {
+      type: "Josera YoungStar dry food",
+      snacks: defaultSnackList,
+      snacksUpdatedAt: "",
+      reminderMinutes: 5,
+      dailyTargetGrams: 223,
+      expectedAdultWeightKg: 30,
+      estimatedAdultWeightKg: 0,
+      estimatedAdultWeightConfidence: "",
+      useEstimatedAdultWeight: false,
+      autoTarget: true,
+      recommendationWeek: "",
+      recommendationRange: "205-240g",
+      recommendationSource: "Josera YoungStar",
+      amounts: { morning: "110g", afternoon: "", evening: "120g" },
+    },
     sync: { code: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
     stoppedSessionIds: [],
@@ -3316,7 +4133,7 @@ function loadState() {
     photos: [],
     records: {
       [key]: [
-        { id: "sample-1", type: "food", time: "07:30", amount: "110g", note: "Breakfast" },
+        { id: "sample-1", type: "food", time: "07:30", amount: "110g", note: "Breakfast", foodKind: "food" },
         { id: "sample-2", type: "walk", time: "08:15", amount: "22 min", note: "Maple park loop" },
         { id: "sample-3", type: "pee", time: "08:35", amount: "Normal", note: "After walk" },
         { id: "sample-4", type: "weight", time: "18:00", amount: "5.1kg", note: "Weekly weigh-in" },
@@ -3345,6 +4162,8 @@ function migrateState(value) {
         };
       })
     : [];
+  const hasSnackSettings = Boolean(value.foodSettings) && Object.prototype.hasOwnProperty.call(value.foodSettings, "snacks");
+  const migratedSnacks = hasSnackSettings ? normalizeSnackList(value.foodSettings.snacks) : defaultSnackList;
 
   return {
     profile: {
@@ -3376,7 +4195,18 @@ function migrateState(value) {
     },
     foodSettings: {
       type: value.foodSettings?.type || "",
+      snacks: migratedSnacks,
+      snacksUpdatedAt: value.foodSettings?.snacksUpdatedAt || "",
       reminderMinutes: Number.isFinite(Number(value.foodSettings?.reminderMinutes)) ? Number(value.foodSettings.reminderMinutes) : 5,
+      dailyTargetGrams: Number.isFinite(Number(value.foodSettings?.dailyTargetGrams)) ? Number(value.foodSettings.dailyTargetGrams) : 223,
+      expectedAdultWeightKg: Number.isFinite(Number(value.foodSettings?.expectedAdultWeightKg)) ? Number(value.foodSettings.expectedAdultWeightKg) : 30,
+      estimatedAdultWeightKg: Number.isFinite(Number(value.foodSettings?.estimatedAdultWeightKg)) ? Number(value.foodSettings.estimatedAdultWeightKg) : 0,
+      estimatedAdultWeightConfidence: value.foodSettings?.estimatedAdultWeightConfidence || "",
+      useEstimatedAdultWeight: Boolean(value.foodSettings?.useEstimatedAdultWeight),
+      autoTarget: value.foodSettings?.autoTarget !== false,
+      recommendationWeek: value.foodSettings?.recommendationWeek || "",
+      recommendationRange: value.foodSettings?.recommendationRange || "",
+      recommendationSource: value.foodSettings?.recommendationSource || "Josera YoungStar",
       amounts: {
         morning: value.foodSettings?.amounts?.morning || "",
         afternoon: value.foodSettings?.amounts?.afternoon || "",
