@@ -1074,6 +1074,46 @@ select:focus {
   font-size: 0.74rem;
 }
 
+.backup-recovery-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.backup-recovery-list h3 {
+  font-size: 0.95rem;
+}
+
+.backup-recovery-list p {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.backup-recovery-item {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+}
+
+.backup-recovery-item strong {
+  font-size: 0.9rem;
+}
+
+.backup-recovery-item span,
+.backup-recovery-item small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .quick-form {
   display: grid;
   gap: 10px;

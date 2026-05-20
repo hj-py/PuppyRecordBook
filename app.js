@@ -3476,6 +3476,11 @@ async function pullFirebaseSync() {
   if (!settings) {
     return;
   }
+  if (hasPendingFirebasePush()) {
+    renderSyncStatus("Pull paused because this device still has a failed push waiting. Local records are protected; let Push/auto-retry finish first.");
+    showToast("Pull paused while local records are waiting to push.", 9000);
+    return;
+  }
 
   renderSyncStatus("Pulling from Firebase...");
   try {
@@ -3534,7 +3539,7 @@ function queueFirebaseRetry(message) {
   }
   firebaseRetryCount += 1;
   const delay = Math.min(60000, 5000 * firebaseRetryCount);
-  const retryMessage = `${message}. Retrying automatically in ${Math.round(delay / 1000)} sec.`;
+  const retryMessage = `${message}. Local records are kept here. Remote pulls are paused; retrying push in ${Math.round(delay / 1000)} sec.`;
   renderSyncStatus(retryMessage);
   showToast(retryMessage, 9000);
   window.clearTimeout(firebaseRetryTimer);
@@ -3542,6 +3547,10 @@ function queueFirebaseRetry(message) {
     renderSyncStatus(`Retrying Firebase push (${firebaseRetryCount})...`);
     autoFirebaseSync();
   }, delay);
+}
+
+function hasPendingFirebasePush() {
+  return firebaseRetryCount > 0 || Boolean(firebaseRetryTimer);
 }
 
 function clearFirebaseRetry() {
@@ -3657,7 +3666,7 @@ function startFirebasePolling() {
 }
 
 async function pollFirebaseSync() {
-  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress) {
+  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress || hasPendingFirebasePush()) {
     return;
   }
 
@@ -3739,7 +3748,7 @@ function refreshCurrentView() {
 
 function mergeStates(local, remote) {
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
-  const deletedRecordIds = Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
+  const deletedRecordIds = Array.from(new Set(local.deletedRecordIds || []));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
   merged.owner = { ...remote.owner, ...local.owner };
   merged.profile = { ...remote.profile, ...local.profile };
