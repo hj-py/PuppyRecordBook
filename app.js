@@ -1,4 +1,5 @@
 const storageKey = "puppy-record-book-state";
+const backupStorageKey = "puppy-record-book-state-backups";
 
 const typeConfig = {
   walk: { label: "Walk", icon: "W", color: "#617861", amount: "Minutes", placeholder: "e.g. 30 min" },
@@ -251,6 +252,7 @@ const elements = {
   firebaseConfig: document.querySelector("#firebaseConfig"),
   exportExcelButton: document.querySelector("#exportExcelButton"),
   importDataInput: document.querySelector("#importDataInput"),
+  recoverBackupButton: document.querySelector("#recoverBackupButton"),
   syncStatus: document.querySelector("#syncStatus"),
 };
 
@@ -467,15 +469,17 @@ function bindEvents() {
     recordMainWeightChange();
   });
 
+  const handleProfileInput = () => {
+    syncProfileFromForm();
+    persist();
+    hydrateMainProfile();
+    renderAge();
+    renderInsight();
+    renderReminderSections();
+  };
   getProfileInputs().forEach((input) => {
-    input.addEventListener("input", () => {
-      syncProfileFromForm();
-      persist();
-      hydrateMainProfile();
-      renderAge();
-      renderInsight();
-      renderReminderSections();
-    });
+    input.addEventListener("input", handleProfileInput);
+    input.addEventListener("change", handleProfileInput);
   });
 
   elements.enableVaccineAlarm.addEventListener("click", () => {
@@ -504,6 +508,7 @@ function bindEvents() {
   elements.pullFirebaseButton.addEventListener("click", pullFirebaseSync);
   elements.exportExcelButton.addEventListener("click", exportExcelData);
   elements.importDataInput.addEventListener("change", importData);
+  elements.recoverBackupButton.addEventListener("click", recoverLatestLocalBackup);
 
   [elements.syncCode, elements.firebaseConfig].forEach((input) => {
     input.addEventListener("input", () => {
@@ -2405,13 +2410,17 @@ function renderFoodRecommendationStatus() {
     return;
   }
   const mode = state.foodSettings.autoTarget ? "Auto weekly" : "Manual";
+  const target = getFoodDailyTarget();
+  if (state.foodSettings.autoTarget && elements.foodDailyTarget) {
+    elements.foodDailyTarget.value = target || "";
+  }
   const estimate = getAdultWeightEstimate();
   const estimateText = estimate ? ` Growth estimate: ${estimate.value.toFixed(1)}kg${state.foodSettings.useEstimatedAdultWeight ? " used" : ""}.` : "";
   const parsedText =
     recommendation.enteredAdultWeightKg !== recommendation.adultWeightKg
       ? ` Calculator uses ${recommendation.adultWeightKg}kg from ${recommendation.enteredAdultWeightKg.toFixed(1)}kg.`
       : "";
-  elements.foodRecommendationStatus.innerHTML = `${escapeHtml(mode)} target: ${escapeHtml(String(getFoodDailyTarget()))}g/day. Josera ${escapeHtml(recommendation.product.label)} calculator estimate for ${escapeHtml(String(recommendation.ageWeeks))} weeks and ${escapeHtml(String(recommendation.adultWeightKg))}kg expected grown weight: ${escapeHtml(String(recommendation.targetGrams))}g/day.${escapeHtml(parsedText)}${escapeHtml(estimateText)} <a href="${joseraFeedingSourceUrl}" target="_blank" rel="noreferrer">Josera calculator</a> - <a href="${recommendation.product.guideUrl}" target="_blank" rel="noreferrer">${escapeHtml(recommendation.product.label)} guide</a>`;
+  elements.foodRecommendationStatus.innerHTML = `${escapeHtml(mode)} target: ${escapeHtml(String(target))}g/day. Josera ${escapeHtml(recommendation.product.label)} calculator estimate for ${escapeHtml(String(recommendation.ageWeeks))} weeks and ${escapeHtml(String(recommendation.adultWeightKg))}kg expected grown weight: ${escapeHtml(String(recommendation.targetGrams))}g/day.${escapeHtml(parsedText)}${escapeHtml(estimateText)} <a href="${joseraFeedingSourceUrl}" target="_blank" rel="noreferrer">Josera calculator</a> - <a href="${recommendation.product.guideUrl}" target="_blank" rel="noreferrer">${escapeHtml(recommendation.product.label)} guide</a>`;
 }
 
 function getJoseraRecommendation(dateKey = toKey(today)) {
@@ -3021,27 +3030,83 @@ function makeJsonSafe(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function applySyncedPayload(payload) {
+function getRecoverySignature(sourceState = state) {
+  return [
+    ...getRecordSignatures(sourceState.records || {}),
+    ...getActiveSessionSignatures(sourceState.activeSessions || {}),
+    ...(sourceState.deletedRecordIds || []).map((id) => `deleted|${id}`),
+    ...(sourceState.stoppedSessionIds || []).map((id) => `stopped|${id}`),
+    ...Object.entries(sourceState.bookmarks || {}).map(([date, value]) => `bookmark|${date}|${JSON.stringify(value)}`),
+  ]
+    .sort()
+    .join("\n");
+}
+
+function createLocalBackup(reason) {
+  try {
+    const backups = JSON.parse(localStorage.getItem(backupStorageKey) || "[]");
+    const signature = getRecoverySignature(state);
+    if (Array.isArray(backups) && backups[0]?.signature === signature) {
+      return;
+    }
+    const backup = {
+      reason,
+      savedAt: new Date().toISOString(),
+      signature,
+      state: makeJsonSafe({ ...state, photos: [] }),
+    };
+    const nextBackups = [backup, ...(Array.isArray(backups) ? backups : [])].slice(0, 20);
+    localStorage.setItem(backupStorageKey, JSON.stringify(nextBackups));
+  } catch {
+    // Backup failure must never block logging.
+  }
+}
+
+function getLocalBackups() {
+  try {
+    const backups = JSON.parse(localStorage.getItem(backupStorageKey) || "[]");
+    return Array.isArray(backups) ? backups : [];
+  } catch {
+    return [];
+  }
+}
+
+function recoverLatestLocalBackup() {
+  const backup = getLocalBackups()[0];
+  if (!backup?.state) {
+    renderSyncStatus("No local recovery backup found on this device.");
+    showToast("No local recovery backup found on this device.", 6000);
+    return;
+  }
+
+  createLocalBackup("before recovery restore");
   const localPhotos = state.photos;
   const localSync = state.sync;
-  const localDeletedRecordIds = state.deletedRecordIds || [];
-  const localActiveSessions = normalizeActiveSessions(state.activeSessions);
-  const localStoppedSessionIds = state.stoppedSessionIds || [];
-  const nextState = migrateState(payload.data || payload);
-  nextState.deletedRecordIds = Array.from(new Set([...(nextState.deletedRecordIds || []), ...localDeletedRecordIds]));
-  nextState.stoppedSessionIds = Array.from(new Set([...(nextState.stoppedSessionIds || []), ...localStoppedSessionIds]));
-  nextState.records = mergeRecords(nextState.records || {}, {}, nextState.deletedRecordIds);
-  nextState.activeSessions = mergeActiveSessions(localActiveSessions, nextState.activeSessions || {}, nextState.stoppedSessionIds);
+  const backupState = migrateState(backup.state);
+  const backupRecordIds = new Set(
+    Object.values(backupState.records || {})
+      .flat()
+      .map((record) => record.id)
+      .filter(Boolean)
+  );
+  const local = makeJsonSafe(state);
+  local.deletedRecordIds = (local.deletedRecordIds || []).filter((id) => !backupRecordIds.has(id));
+  backupState.deletedRecordIds = (backupState.deletedRecordIds || []).filter((id) => !backupRecordIds.has(id));
+  const merged = mergeStates(local, backupState);
   Object.keys(state).forEach((key) => delete state[key]);
-  Object.assign(state, nextState);
+  Object.assign(state, merged);
   state.photos = localPhotos;
-  state.sync = { ...nextState.sync, ...localSync };
-  state.sync.lastSync = new Date().toLocaleString();
+  state.sync = localSync;
+  syncProfileWeightFromRecords();
   persist();
-  hydrateMainProfile();
-  hydrateProfileForm();
   refreshCurrentView();
   renderReminderSections();
+  renderSyncStatus(`Recovered local backup from ${new Date(backup.savedAt).toLocaleString()}.`);
+  showToast("Recovered the latest local backup and queued Firebase sync.", 8000);
+}
+
+function applySyncedPayload(payload) {
+  mergeSyncedPayload(payload);
 }
 
 function exportExcelData() {
@@ -3339,7 +3404,7 @@ async function pullFirebaseSync() {
       return;
     }
     applySyncedPayload(snapshot.data().bookData);
-    renderSyncStatus(`Pulled Firebase sync code "${state.sync.code}".`);
+    renderSyncStatus(`Merged Firebase sync code "${state.sync.code}" without replacing local records.`);
   } catch (error) {
     renderSyncStatus(`Firebase pull failed: ${getFirebaseErrorMessage(error)}`);
   }
@@ -3548,6 +3613,9 @@ function mergeSyncedPayload(payload) {
   const local = makeJsonSafe(state);
   const remote = migrateState(payload?.data || payload || {});
   const merged = mergeStates(local, remote);
+  if (hasMergedStateChanges(local, merged)) {
+    createLocalBackup("before Firebase merge");
+  }
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, merged);
   state.photos = localPhotos;
@@ -3618,6 +3686,14 @@ function mergeStates(local, remote) {
   merged.records = mergeRecords(local.records || {}, remote.records || {}, deletedRecordIds);
   merged.activeSessions = mergeActiveSessions(local.activeSessions || {}, remote.activeSessions || {}, stoppedSessionIds);
   return merged;
+}
+
+function hasMergedStateChanges(local, merged) {
+  return JSON.stringify(local.records || {}) !== JSON.stringify(merged.records || {}) ||
+    JSON.stringify(normalizeActiveSessions(local.activeSessions || {})) !== JSON.stringify(normalizeActiveSessions(merged.activeSessions || {})) ||
+    JSON.stringify(local.bookmarks || {}) !== JSON.stringify(merged.bookmarks || {}) ||
+    JSON.stringify(local.deletedRecordIds || []) !== JSON.stringify(merged.deletedRecordIds || []) ||
+    JSON.stringify(local.stoppedSessionIds || []) !== JSON.stringify(merged.stoppedSessionIds || []);
 }
 
 function mergeBookmarks(localBookmarks, remoteBookmarks) {
@@ -4239,16 +4315,32 @@ function migrateState(value) {
 
 function persist(options = {}) {
   persistOptions = options;
+  let saved = false;
   try {
     localStorage.setItem(storageKey, JSON.stringify(state));
-  } catch {
+    saved = true;
+  } catch (error) {
     if (state.photos.length) {
       state.photos = [];
       elements.heroPhoto.src = defaultPhoto;
-      localStorage.setItem(storageKey, JSON.stringify(state));
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(state));
+        saved = true;
+        showToast("Local storage was full, so the profile photo was removed. Records were kept.", 9000);
+      } catch {
+        saved = false;
+      }
     }
   }
-  scheduleAutoFirebaseSync();
+  if (!saved) {
+    renderSyncStatus("Local save failed. Do not close the app; export your records and free device storage.");
+    showToast("Local save failed. Do not close the app; export your records first.", 12000);
+  } else {
+    if (!options.skipRecoveryBackup) {
+      createLocalBackup("local save");
+    }
+    scheduleAutoFirebaseSync();
+  }
   persistOptions = {};
 }
 
