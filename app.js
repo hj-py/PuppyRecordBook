@@ -460,6 +460,7 @@ function bindEvents() {
 
   elements.puppyName.addEventListener("input", () => {
     state.profile.name = elements.puppyName.value.trim() || "Puppy";
+    state.profile.updatedAt = new Date().toISOString();
     persist();
     hydrateProfileForm();
     renderAge();
@@ -485,6 +486,7 @@ function bindEvents() {
 
   elements.enableVaccineAlarm.addEventListener("click", () => {
     state.settings.vaccineAlarmEnabled = !state.settings.vaccineAlarmEnabled;
+    state.settings.updatedAt = new Date().toISOString();
     persist();
     renderReminderSections();
     maybeRequestNotificationPermission({ allowPrompt: state.settings.vaccineAlarmEnabled });
@@ -492,6 +494,7 @@ function bindEvents() {
 
   elements.enableSchoolAlarm.addEventListener("click", () => {
     state.settings.schoolAlarmEnabled = !state.settings.schoolAlarmEnabled;
+    state.settings.updatedAt = new Date().toISOString();
     persist();
     renderReminderSections();
     maybeRequestNotificationPermission({ allowPrompt: state.settings.schoolAlarmEnabled });
@@ -499,6 +502,7 @@ function bindEvents() {
 
   elements.enableFoodAlarm.addEventListener("click", () => {
     state.settings.foodAlarmEnabled = !state.settings.foodAlarmEnabled;
+    state.settings.updatedAt = new Date().toISOString();
     persist();
     renderReminderSections();
     maybeRequestNotificationPermission({ allowPrompt: state.settings.foodAlarmEnabled });
@@ -660,6 +664,7 @@ function recordMainWeightChange() {
     ];
   }
   state.profile.weightKg = value;
+  state.profile.updatedAt = new Date().toISOString();
   hydrateProfileForm();
   renderInsight();
   renderCategory();
@@ -2688,6 +2693,16 @@ function hydrateProfileForm() {
 }
 
 function syncProfileFromForm() {
+  const before = {
+    owner: getComparableSection(state.owner),
+    profile: getComparableSection(state.profile),
+    school: getComparableSection(state.school),
+    schoolSchedule: getComparableSection(state.schoolSchedule),
+    vaccination: getComparableSection(state.vaccination),
+    foodTimes: getComparableSection(state.foodTimes),
+    foodSettings: getComparableSection(state.foodSettings),
+  };
+  const updatedAt = new Date().toISOString();
   state.owner.name = elements.ownerName.value.trim();
   state.profile.name = elements.profilePuppyName.value.trim() || "Puppy";
   state.profile.birthday = elements.profilePuppyBirthday.value || state.profile.birthday;
@@ -2724,6 +2739,25 @@ function syncProfileFromForm() {
   state.foodSettings.amounts.afternoon = elements.foodAmountAfternoon.value.trim();
   state.foodSettings.amounts.evening = elements.foodAmountEvening.value.trim();
   refreshFoodRecommendationIfNeeded();
+  markSectionUpdatedAt(state.owner, before.owner, updatedAt);
+  markSectionUpdatedAt(state.profile, before.profile, updatedAt);
+  markSectionUpdatedAt(state.school, before.school, updatedAt);
+  markSectionUpdatedAt(state.schoolSchedule, before.schoolSchedule, updatedAt);
+  markSectionUpdatedAt(state.vaccination, before.vaccination, updatedAt);
+  markSectionUpdatedAt(state.foodTimes, before.foodTimes, updatedAt);
+  markSectionUpdatedAt(state.foodSettings, before.foodSettings, updatedAt);
+}
+
+function getComparableSection(section = {}) {
+  const clone = makeJsonSafe(section || {});
+  delete clone.updatedAt;
+  return clone;
+}
+
+function markSectionUpdatedAt(section, before, updatedAt) {
+  if (JSON.stringify(getComparableSection(section)) !== JSON.stringify(before)) {
+    section.updatedAt = updatedAt;
+  }
 }
 
 function getProfileInputs() {
@@ -3750,26 +3784,19 @@ function mergeStates(local, remote) {
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
   const deletedRecordIds = Array.from(new Set(local.deletedRecordIds || []));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
-  merged.owner = { ...remote.owner, ...local.owner };
-  merged.profile = { ...remote.profile, ...local.profile };
-  merged.school = { ...remote.school, ...local.school };
-  merged.schoolSchedule = { ...remote.schoolSchedule, ...local.schoolSchedule };
-  merged.foodTimes = { ...remote.foodTimes, ...local.foodTimes };
-  merged.foodSettings = {
-    ...remote.foodSettings,
-    ...local.foodSettings,
-    reminderMinutes: Number.isFinite(Number(local.foodSettings?.reminderMinutes))
-      ? Number(local.foodSettings.reminderMinutes)
-      : Number(remote.foodSettings?.reminderMinutes) || 5,
-    amounts: { ...remote.foodSettings?.amounts, ...local.foodSettings?.amounts },
-  };
+  merged.owner = chooseLatestSection(local.owner, remote.owner);
+  merged.profile = chooseLatestSection(local.profile, remote.profile);
+  merged.school = chooseLatestSection(local.school, remote.school);
+  merged.schoolSchedule = chooseLatestSection(local.schoolSchedule, remote.schoolSchedule);
+  merged.foodTimes = chooseLatestSection(local.foodTimes, remote.foodTimes);
+  merged.foodSettings = chooseLatestSection(local.foodSettings, remote.foodSettings);
   const localSnackTime = Date.parse(local.foodSettings?.snacksUpdatedAt || "") || 0;
   const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
   const snackSource = remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
   merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
   merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
-  merged.settings = { ...remote.settings, ...local.settings };
-  merged.vaccination = { ...remote.vaccination, ...local.vaccination };
+  merged.settings = chooseLatestSection(local.settings, remote.settings);
+  merged.vaccination = chooseLatestSection(local.vaccination, remote.vaccination);
   merged.sync = { ...remote.sync, ...local.sync };
   merged.bookmarks = mergeBookmarks(local.bookmarks || {}, remote.bookmarks || {});
   merged.deletedRecordIds = deletedRecordIds;
@@ -3779,10 +3806,27 @@ function mergeStates(local, remote) {
   return merged;
 }
 
+function chooseLatestSection(localSection = {}, remoteSection = {}) {
+  const localTime = Date.parse(localSection?.updatedAt || "") || 0;
+  const remoteTime = Date.parse(remoteSection?.updatedAt || "") || 0;
+  if (remoteTime > localTime) {
+    return { ...localSection, ...remoteSection };
+  }
+  return { ...remoteSection, ...localSection };
+}
+
 function hasMergedStateChanges(local, merged) {
   return JSON.stringify(local.records || {}) !== JSON.stringify(merged.records || {}) ||
     JSON.stringify(normalizeActiveSessions(local.activeSessions || {})) !== JSON.stringify(normalizeActiveSessions(merged.activeSessions || {})) ||
     JSON.stringify(local.bookmarks || {}) !== JSON.stringify(merged.bookmarks || {}) ||
+    JSON.stringify(local.profile || {}) !== JSON.stringify(merged.profile || {}) ||
+    JSON.stringify(local.owner || {}) !== JSON.stringify(merged.owner || {}) ||
+    JSON.stringify(local.school || {}) !== JSON.stringify(merged.school || {}) ||
+    JSON.stringify(local.schoolSchedule || {}) !== JSON.stringify(merged.schoolSchedule || {}) ||
+    JSON.stringify(local.foodTimes || {}) !== JSON.stringify(merged.foodTimes || {}) ||
+    JSON.stringify(local.foodSettings || {}) !== JSON.stringify(merged.foodSettings || {}) ||
+    JSON.stringify(local.vaccination || {}) !== JSON.stringify(merged.vaccination || {}) ||
+    JSON.stringify(local.settings || {}) !== JSON.stringify(merged.settings || {}) ||
     JSON.stringify(local.deletedRecordIds || []) !== JSON.stringify(merged.deletedRecordIds || []) ||
     JSON.stringify(local.stoppedSessionIds || []) !== JSON.stringify(merged.stoppedSessionIds || []);
 }
@@ -4269,11 +4313,12 @@ function loadState() {
       breed: "",
       weightKg: 5.1,
       notes: "",
+      updatedAt: "",
     },
-    owner: { name: "" },
-    school: { name: "", trainer: "", contact: "", notes: "" },
-    schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "" },
-    foodTimes: { morning: "07:30", afternoon: "", evening: "18:30" },
+    owner: { name: "", updatedAt: "" },
+    school: { name: "", trainer: "", contact: "", notes: "", updatedAt: "" },
+    schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "", updatedAt: "" },
+    foodTimes: { morning: "07:30", afternoon: "", evening: "18:30", updatedAt: "" },
     foodSettings: {
       type: "Josera YoungStar dry food",
       snacks: defaultSnackList,
@@ -4289,14 +4334,15 @@ function loadState() {
       recommendationRange: "205-240g",
       recommendationSource: "Josera YoungStar",
       amounts: { morning: "110g", afternoon: "", evening: "120g" },
+      updatedAt: "",
     },
     sync: { code: "", firebaseConfig: "", lastSync: "" },
     activeSessions: {},
     stoppedSessionIds: [],
     deletedRecordIds: [],
     bookmarks: {},
-    vaccination: { rabiesDate: "", rabiesValidUntil: "" },
-    settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "" },
+    vaccination: { rabiesDate: "", rabiesValidUntil: "", updatedAt: "" },
+    settings: { vaccineAlarmEnabled: false, schoolAlarmEnabled: false, foodAlarmEnabled: false, lastNotificationKey: "", updatedAt: "" },
     photos: [],
     records: {
       [key]: [
@@ -4339,26 +4385,31 @@ function migrateState(value) {
       breed: profile.breed || "",
       weightKg: legacyWeight,
       notes: profile.notes || "",
+      updatedAt: profile.updatedAt || "",
     },
     owner: {
       name: value.owner?.name || "",
+      updatedAt: value.owner?.updatedAt || "",
     },
     school: {
       name: value.school?.name || "",
       trainer: value.school?.trainer || "",
       contact: value.school?.contact || "",
       notes: value.school?.notes || "",
+      updatedAt: value.school?.updatedAt || "",
     },
     schoolSchedule: {
       weekday: Number(value.schoolSchedule?.weekday ?? 6),
       time: value.schoolSchedule?.time || "18:00",
       startDate: value.schoolSchedule?.startDate || "",
       endDate: value.schoolSchedule?.endDate || "",
+      updatedAt: value.schoolSchedule?.updatedAt || "",
     },
     foodTimes: {
       morning: value.foodTimes?.morning || "07:30",
       afternoon: value.foodTimes?.afternoon || "",
       evening: value.foodTimes?.evening || "18:30",
+      updatedAt: value.foodTimes?.updatedAt || "",
     },
     foodSettings: {
       type: value.foodSettings?.type || "",
@@ -4379,6 +4430,7 @@ function migrateState(value) {
         afternoon: value.foodSettings?.amounts?.afternoon || "",
         evening: value.foodSettings?.amounts?.evening || "",
       },
+      updatedAt: value.foodSettings?.updatedAt || "",
     },
     sync: {
       code: value.sync?.code || "",
@@ -4392,12 +4444,14 @@ function migrateState(value) {
     vaccination: {
       rabiesDate: value.vaccination?.rabiesDate || "",
       rabiesValidUntil: value.vaccination?.rabiesValidUntil || "",
+      updatedAt: value.vaccination?.updatedAt || "",
     },
     settings: {
       vaccineAlarmEnabled: Boolean(value.settings?.vaccineAlarmEnabled),
       schoolAlarmEnabled: Boolean(value.settings?.schoolAlarmEnabled),
       foodAlarmEnabled: Boolean(value.settings?.foodAlarmEnabled),
       lastNotificationKey: value.settings?.lastNotificationKey || "",
+      updatedAt: value.settings?.updatedAt || "",
     },
     photos: photos.slice(0, 1),
     records: value.records || {},
