@@ -3221,8 +3221,8 @@ function recoverLocalBackup(backup) {
   showToast(`Recovered backup: ${recordCount} records, ${todayCount} today.`, 9000);
 }
 
-function applySyncedPayload(payload) {
-  mergeSyncedPayload(payload);
+function applySyncedPayload(payload, options = {}) {
+  mergeSyncedPayload(payload, options);
 }
 
 function exportExcelData() {
@@ -3524,8 +3524,8 @@ async function pullFirebaseSync() {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
       return;
     }
-    applySyncedPayload(snapshot.data().bookData);
-    renderSyncStatus(`Merged Firebase sync code "${state.sync.code}" without replacing local records.`);
+    applySyncedPayload(snapshot.data().bookData, { preferRemoteDefaults: true });
+    renderSyncStatus(`Pulled profile and default settings from Firebase. Local records were merged, not replaced.`);
   } catch (error) {
     renderSyncStatus(`Firebase pull failed: ${getFirebaseErrorMessage(error)}`);
   }
@@ -3733,11 +3733,13 @@ function getFirebaseSettingsSilently() {
   }
 }
 
-function mergeSyncedPayload(payload) {
+function mergeSyncedPayload(payload, options = {}) {
   const localPhotos = state.photos;
   const local = makeJsonSafe(state);
-  const remote = migrateState(payload?.data || payload || {});
-  const merged = mergeStates(local, remote);
+  const rawRemote = getPayloadData(payload);
+  const remote = migrateState(rawRemote);
+  const mergeOptions = { ...options, rawRemote };
+  const merged = mergeStates(local, remote, mergeOptions);
   if (hasMergedStateChanges(local, merged)) {
     createLocalBackup("before Firebase merge");
   }
@@ -3780,23 +3782,27 @@ function refreshCurrentView() {
   renderMain();
 }
 
-function mergeStates(local, remote) {
+function mergeStates(local, remote, options = {}) {
+  const preferRemoteDefaults = Boolean(options.preferRemoteDefaults);
+  const remoteHasSection = (sectionName) => Object.prototype.hasOwnProperty.call(options.rawRemote || {}, sectionName);
+  const chooseDefaultSection = (sectionName, localSection, remoteSection) =>
+    preferRemoteDefaults && remoteHasSection(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
   const deletedRecordIds = Array.from(new Set(local.deletedRecordIds || []));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
-  merged.owner = chooseLatestSection(local.owner, remote.owner);
-  merged.profile = chooseLatestSection(local.profile, remote.profile);
-  merged.school = chooseLatestSection(local.school, remote.school);
-  merged.schoolSchedule = chooseLatestSection(local.schoolSchedule, remote.schoolSchedule);
-  merged.foodTimes = chooseLatestSection(local.foodTimes, remote.foodTimes);
-  merged.foodSettings = chooseLatestSection(local.foodSettings, remote.foodSettings);
+  merged.owner = chooseDefaultSection("owner", local.owner, remote.owner);
+  merged.profile = chooseDefaultSection("profile", local.profile, remote.profile);
+  merged.school = chooseDefaultSection("school", local.school, remote.school);
+  merged.schoolSchedule = chooseDefaultSection("schoolSchedule", local.schoolSchedule, remote.schoolSchedule);
+  merged.foodTimes = chooseDefaultSection("foodTimes", local.foodTimes, remote.foodTimes);
+  merged.foodSettings = chooseDefaultSection("foodSettings", local.foodSettings, remote.foodSettings);
   const localSnackTime = Date.parse(local.foodSettings?.snacksUpdatedAt || "") || 0;
   const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
-  const snackSource = remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
+  const snackSource = (preferRemoteDefaults && remoteHasSection("foodSettings")) || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
   merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
   merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
-  merged.settings = chooseLatestSection(local.settings, remote.settings);
-  merged.vaccination = chooseLatestSection(local.vaccination, remote.vaccination);
+  merged.settings = chooseDefaultSection("settings", local.settings, remote.settings);
+  merged.vaccination = chooseDefaultSection("vaccination", local.vaccination, remote.vaccination);
   merged.sync = { ...remote.sync, ...local.sync };
   merged.bookmarks = mergeBookmarks(local.bookmarks || {}, remote.bookmarks || {});
   merged.deletedRecordIds = deletedRecordIds;
@@ -3813,6 +3819,10 @@ function chooseLatestSection(localSection = {}, remoteSection = {}) {
     return { ...localSection, ...remoteSection };
   }
   return { ...remoteSection, ...localSection };
+}
+
+function chooseRemoteSection(localSection = {}, remoteSection = {}) {
+  return { ...localSection, ...remoteSection };
 }
 
 function hasMergedStateChanges(local, merged) {

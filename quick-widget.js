@@ -260,24 +260,34 @@ function getSyncPayload() {
 }
 
 function mergeRemote(payload) {
-  const remote = migrateState(payload?.data || payload || {});
+  const rawRemote = payload?.data || payload || {};
+  const remote = migrateState(rawRemote);
+  const remoteHasSection = (sectionName) => Object.prototype.hasOwnProperty.call(rawRemote, sectionName);
   const localSync = state.sync;
   const localRecords = state.records || {};
   const remoteRecords = remote.records || {};
-  state.records = mergeRecords(localRecords, remoteRecords, [...(state.deletedRecordIds || []), ...(remote.deletedRecordIds || [])]);
+  state.records = mergeRecords(localRecords, remoteRecords, state.deletedRecordIds || []);
   state.activeSessions = mergeActiveSessions(state.activeSessions || {}, remote.activeSessions || {}, [
     ...(state.stoppedSessionIds || []),
     ...(remote.stoppedSessionIds || []),
   ]);
   state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), ...(remote.stoppedSessionIds || [])]));
-  state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), ...(remote.deletedRecordIds || [])]));
-  state.profile = { ...state.profile, ...remote.profile };
-  state.foodTimes = { ...remote.foodTimes, ...state.foodTimes };
-  state.foodSettings = {
-    ...remote.foodSettings,
-    ...state.foodSettings,
-    amounts: { ...remote.foodSettings?.amounts, ...state.foodSettings?.amounts },
-  };
+  state.deletedRecordIds = Array.from(new Set(state.deletedRecordIds || []));
+  if (remoteHasSection("profile")) state.profile = { ...state.profile, ...remote.profile };
+  if (remoteHasSection("owner")) state.owner = { ...state.owner, ...remote.owner };
+  if (remoteHasSection("school")) state.school = { ...state.school, ...remote.school };
+  if (remoteHasSection("schoolSchedule")) state.schoolSchedule = { ...state.schoolSchedule, ...remote.schoolSchedule };
+  if (remoteHasSection("foodTimes")) state.foodTimes = { ...state.foodTimes, ...remote.foodTimes };
+  if (remoteHasSection("foodSettings")) {
+    state.foodSettings = {
+      ...state.foodSettings,
+      ...remote.foodSettings,
+      amounts: { ...state.foodSettings?.amounts, ...remote.foodSettings?.amounts },
+    };
+  }
+  if (remoteHasSection("bookmarks")) state.bookmarks = { ...state.bookmarks, ...remote.bookmarks };
+  if (remoteHasSection("vaccination")) state.vaccination = { ...state.vaccination, ...remote.vaccination };
+  if (remoteHasSection("settings")) state.settings = { ...state.settings, ...remote.settings };
   state.sync = localSync;
 }
 
