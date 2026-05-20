@@ -253,6 +253,7 @@ const elements = {
   exportExcelButton: document.querySelector("#exportExcelButton"),
   importDataInput: document.querySelector("#importDataInput"),
   recoverBackupButton: document.querySelector("#recoverBackupButton"),
+  backupRecoveryList: document.querySelector("#backupRecoveryList"),
   syncStatus: document.querySelector("#syncStatus"),
 };
 
@@ -3071,8 +3072,86 @@ function getLocalBackups() {
   }
 }
 
+function countBackupRecords(backup) {
+  return Object.values(backup?.state?.records || {}).reduce((total, records) => total + (Array.isArray(records) ? records.length : 0), 0);
+}
+
+function countBackupTodayRecords(backup) {
+  const records = backup?.state?.records?.[toKey(today)];
+  return Array.isArray(records) ? records.length : 0;
+}
+
+function getBestLocalBackup() {
+  return getLocalBackups()
+    .filter((backup) => backup?.state)
+    .sort((a, b) => {
+      const todayDifference = countBackupTodayRecords(b) - countBackupTodayRecords(a);
+      if (todayDifference) {
+        return todayDifference;
+      }
+      const recordDifference = countBackupRecords(b) - countBackupRecords(a);
+      if (recordDifference) {
+        return recordDifference;
+      }
+      return String(b.savedAt || "").localeCompare(String(a.savedAt || ""));
+    })[0];
+}
+
 function recoverLatestLocalBackup() {
-  const backup = getLocalBackups()[0];
+  const backups = getLocalBackups().filter((backup) => backup?.state);
+  if (backups.length > 1) {
+    renderBackupRecoveryList(backups);
+    renderSyncStatus("Choose the backup with the highest record count, then restore it.");
+    showToast("Backup list opened. Choose the backup with the most records.", 9000);
+    return;
+  }
+  recoverLocalBackup(getBestLocalBackup());
+}
+
+function renderBackupRecoveryList(backups = getLocalBackups()) {
+  const validBackups = backups
+    .filter((backup) => backup?.state)
+    .sort((a, b) => {
+      const recordDifference = countBackupRecords(b) - countBackupRecords(a);
+      if (recordDifference) {
+        return recordDifference;
+      }
+      return String(b.savedAt || "").localeCompare(String(a.savedAt || ""));
+    });
+  if (!validBackups.length) {
+    elements.backupRecoveryList.hidden = false;
+    elements.backupRecoveryList.innerHTML = `<p class="empty-state">No local backups found on this device.</p>`;
+    return;
+  }
+
+  elements.backupRecoveryList.hidden = false;
+  elements.backupRecoveryList.innerHTML = `
+    <h3>Local Recovery Backups</h3>
+    <p>Choose the backup with the most records, usually before the data disappeared.</p>
+    ${validBackups
+      .map((backup, index) => {
+        const savedAt = backup.savedAt ? new Date(backup.savedAt).toLocaleString() : "Unknown time";
+        const recordCount = countBackupRecords(backup);
+        const todayCount = countBackupTodayRecords(backup);
+        return `
+          <button type="button" class="backup-recovery-item" data-backup-index="${index}">
+            <strong>${escapeHtml(String(recordCount))} records</strong>
+            <span>${escapeHtml(String(todayCount))} today - ${escapeHtml(savedAt)}</span>
+            <small>${escapeHtml(backup.reason || "local backup")}</small>
+          </button>
+        `;
+      })
+      .join("")}
+  `;
+  elements.backupRecoveryList.querySelectorAll(".backup-recovery-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      const backup = validBackups[Number(button.dataset.backupIndex)];
+      recoverLocalBackup(backup);
+    });
+  });
+}
+
+function recoverLocalBackup(backup) {
   if (!backup?.state) {
     renderSyncStatus("No local recovery backup found on this device.");
     showToast("No local recovery backup found on this device.", 6000);
@@ -3101,8 +3180,11 @@ function recoverLatestLocalBackup() {
   persist();
   refreshCurrentView();
   renderReminderSections();
-  renderSyncStatus(`Recovered local backup from ${new Date(backup.savedAt).toLocaleString()}.`);
-  showToast("Recovered the latest local backup and queued Firebase sync.", 8000);
+  const recordCount = countBackupRecords(backup);
+  const todayCount = countBackupTodayRecords(backup);
+  elements.backupRecoveryList.hidden = true;
+  renderSyncStatus(`Recovered local backup from ${new Date(backup.savedAt).toLocaleString()}: ${recordCount} records, ${todayCount} today.`);
+  showToast(`Recovered backup: ${recordCount} records, ${todayCount} today.`, 9000);
 }
 
 function applySyncedPayload(payload) {
