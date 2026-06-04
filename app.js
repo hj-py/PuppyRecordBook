@@ -73,7 +73,7 @@ const joseraGrowthModel = {
 const defaultPhoto =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='%23e8dfcf'/%3E%3Ccircle cx='80' cy='84' r='50' fill='%23fffdf8'/%3E%3Cpath d='M43 58c-15 7-25 21-23 36 1 12 9 20 19 20 12 0 19-11 18-24-1-10-6-22-14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M117 58c15 7 25 21 23 36-1 12-9 20-19 20-12 0-19-11-18-24 1-10 6-22 14-32Z' fill='%23efe4d0'/%3E%3Cpath d='M44 70c9-26 64-26 73 0 7 19-1 50-37 50S37 89 44 70Z' fill='%23fff8e9'/%3E%3Cpath d='M55 63c9-14 43-18 52 0-13-7-39-7-52 0Z' fill='%23f6edda'/%3E%3Ccircle cx='64' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='96' cy='80' r='5.8' fill='%2325231f'/%3E%3Ccircle cx='66' cy='78' r='2' fill='%23fffdf8'/%3E%3Ccircle cx='98' cy='78' r='2' fill='%23fffdf8'/%3E%3Cellipse cx='80' cy='95' rx='11' ry='8' fill='%232d2923'/%3E%3Cpath d='M71 108c7 7 17 7 25 0' fill='none' stroke='%232d2923' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E";
 
-const today = new Date();
+let today = new Date();
 const state = loadState();
 let visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedDate = toKey(today);
@@ -552,7 +552,47 @@ function navigateToView(view) {
   showMainView();
 }
 
+function refreshTodayContext({ resetMainDate = false } = {}) {
+  const previousToday = today;
+  const previousKey = toKey(previousToday);
+  const nextToday = new Date();
+  const nextKey = toKey(nextToday);
+  today = nextToday;
+
+  if (previousKey === nextKey) {
+    return false;
+  }
+
+  if (resetMainDate) {
+    selectedDate = nextKey;
+    visibleMonth = new Date(nextToday.getFullYear(), nextToday.getMonth(), 1);
+    homeBookmarkMonth = new Date(nextToday.getFullYear(), nextToday.getMonth(), 1);
+  }
+
+  if (selectedStatusYear === previousToday.getFullYear()) {
+    selectedStatusYear = nextToday.getFullYear();
+  }
+  if (selectedBookmarkYear === previousToday.getFullYear()) {
+    selectedBookmarkYear = nextToday.getFullYear();
+  }
+
+  return true;
+}
+
+function refreshAppForCurrentDay({ resetMainDate = currentView === "main" } = {}) {
+  const dayChanged = refreshTodayContext({ resetMainDate });
+  const foodRecommendationChanged = refreshFoodRecommendationIfNeeded();
+  if (foodRecommendationChanged) {
+    persist({ skipAutoSync: true });
+  }
+  if (dayChanged || foodRecommendationChanged) {
+    refreshCurrentView();
+  }
+  return dayChanged;
+}
+
 function renderMain() {
+  refreshTodayContext({ resetMainDate: true });
   currentView = "main";
   elements.mainView.hidden = false;
   elements.dayView.hidden = true;
@@ -672,6 +712,7 @@ function recordMainWeightChange() {
 }
 
 function renderCalendarView() {
+  refreshTodayContext();
   elements.calendarPageTitle.textContent = visibleMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
   elements.calendarSelectedDateLabel.textContent = formatSelectedDate(selectedDate);
   elements.calendarPageGrid.innerHTML = "";
@@ -3510,22 +3551,36 @@ async function pullFirebaseSync() {
   if (!settings) {
     return;
   }
-  if (hasPendingFirebasePush()) {
-    renderSyncStatus("Pull paused because this device still has a failed push waiting. Local records are protected; let Push/auto-retry finish first.");
-    showToast("Pull paused while local records are waiting to push.", 9000);
-    return;
+  const pendingLocalPush = hasPendingFirebasePush();
+  if (pendingLocalPush) {
+    const shouldMerge = window.confirm(
+      "This device has local changes that failed to push. Pulling now will compare this device with Firebase, keep local-only records, keep Firebase-only records, and write the merged puppy book back to Firebase. Continue?"
+    );
+    if (!shouldMerge) {
+      renderSyncStatus("Pull cancelled. Local records are still kept on this device.");
+      return;
+    }
   }
 
-  renderSyncStatus("Pulling from Firebase...");
+  renderSyncStatus(pendingLocalPush ? "Merging this device with Firebase..." : "Pulling and comparing Firebase...");
   try {
     const services = await getFirebaseServices(settings);
-    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
-    if (!snapshot.exists()) {
+    const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    const firstPull = !state.sync.lastSync;
+    const result = await mergeFirebasePull(services, ref, { preferRemoteDefaults: true, firstPull, preserveRemoteRecords: true });
+    if (!result.found) {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
       return;
     }
-    applySyncedPayload(snapshot.data().bookData, { preferRemoteDefaults: true });
-    renderSyncStatus(`Pulled profile and default settings from Firebase. Local records were merged, not replaced.`);
+    await verifyFirebaseWrite(services, ref, result.payload);
+    state.sync.lastSync = new Date().toLocaleString();
+    persist({ skipAutoSync: true });
+    clearFirebaseRetry();
+    renderSyncStatus(
+      firstPull
+        ? "First Firebase pull complete. Profile and default settings came from Firebase; starter sample records were removed."
+        : `Merge complete. Added ${result.summary.localOnly} local-only records and kept ${result.summary.remoteOnly} Firebase-only records.`
+    );
   } catch (error) {
     renderSyncStatus(`Firebase pull failed: ${getFirebaseErrorMessage(error)}`);
   }
@@ -3573,7 +3628,7 @@ function queueFirebaseRetry(message) {
   }
   firebaseRetryCount += 1;
   const delay = Math.min(60000, 5000 * firebaseRetryCount);
-  const retryMessage = `${message}. Local records are kept here. Remote pulls are paused; retrying push in ${Math.round(delay / 1000)} sec.`;
+  const retryMessage = `${message}. Local records are kept here. Auto-pulls are paused; tap Pull to compare and merge now, or auto-retry will push in ${Math.round(delay / 1000)} sec.`;
   renderSyncStatus(retryMessage);
   showToast(retryMessage, 9000);
   window.clearTimeout(firebaseRetryTimer);
@@ -3615,6 +3670,37 @@ async function writeMergedFirebasePayload(services, ref) {
   return writtenPayload;
 }
 
+async function mergeFirebasePull(services, ref, options = {}) {
+  let writtenPayload = null;
+  let found = false;
+  let summary = { localOnly: 0, remoteOnly: 0 };
+  await services.runTransaction(services.db, async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists()) {
+      return;
+    }
+    found = true;
+    const rawRemote = getPayloadData(snapshot.data().bookData);
+    const remoteState = migrateState(rawRemote);
+    const localState = options.firstPull ? removeStarterSampleRecords(makeJsonSafe(state)) : makeJsonSafe(state);
+    summary = getRecordMergeSummary(localState, remoteState);
+    const mergedState = mergeStates(localState, remoteState, { ...options, rawRemote });
+    writtenPayload = buildSyncPayload(mergedState);
+    transaction.set(ref, {
+      bookData: writtenPayload,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  if (!found) {
+    return { found: false, payload: null, summary };
+  }
+  if (!writtenPayload) {
+    throw new Error("Firebase merge did not prepare data");
+  }
+  mergeSyncedPayload(writtenPayload, options);
+  return { found: true, payload: writtenPayload, summary };
+}
+
 async function verifyFirebaseWrite(services, ref, expectedPayload) {
   const snapshot = await services.getDoc(ref);
   if (!snapshot.exists()) {
@@ -3638,12 +3724,16 @@ function findMissingSyncData(expectedPayload, remotePayload) {
     }
   });
   const remoteSessions = new Set(getActiveSessionSignatures(remote.activeSessions || {}));
-  getActiveSessionSignatures(expected.activeSessions || {}).forEach((signature) => {
+  const remoteStopped = new Set(remote.stoppedSessionIds || []);
+  Object.entries(normalizeActiveSessions(expected.activeSessions || {})).forEach(([, session]) => {
+    if (remoteStopped.has(session.id)) {
+      return;
+    }
+    const signature = [session.id || "", session.type || "", session.start || "", session.updatedAt || ""].join("|");
     if (!remoteSessions.has(signature)) {
       missing.push(`active ${signature.split("|")[0]}`);
     }
   });
-  const remoteStopped = new Set(remote.stoppedSessionIds || []);
   (expected.stoppedSessionIds || []).forEach((id) => {
     if (!remoteStopped.has(id)) {
       missing.push(`stopped ${id}`);
@@ -3678,6 +3768,24 @@ function getRecordSignatures(records) {
   );
 }
 
+function getRecordMergeSummary(localState, remoteState) {
+  const localRecords = new Set(getRecordSignatures(localState.records || {}));
+  const remoteRecords = new Set(getRecordSignatures(remoteState.records || {}));
+  let localOnly = 0;
+  let remoteOnly = 0;
+  localRecords.forEach((signature) => {
+    if (!remoteRecords.has(signature)) {
+      localOnly += 1;
+    }
+  });
+  remoteRecords.forEach((signature) => {
+    if (!localRecords.has(signature)) {
+      remoteOnly += 1;
+    }
+  });
+  return { localOnly, remoteOnly };
+}
+
 function getActiveSessionSignatures(activeSessions) {
   return Object.entries(normalizeActiveSessions(activeSessions || {})).map(([type, session]) =>
     [session.id || "", type, session.start || "", session.updatedAt || ""].join("|")
@@ -3691,12 +3799,17 @@ function hasFirebaseSettings() {
 function startFirebasePolling() {
   window.clearInterval(firebasePollTimer);
   firebasePollTimer = window.setInterval(pollFirebaseSync, 15000);
-  window.addEventListener("focus", pollFirebaseSync);
+  window.addEventListener("focus", handleAppResume);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      pollFirebaseSync();
+      handleAppResume();
     }
   });
+}
+
+function handleAppResume() {
+  refreshAppForCurrentDay();
+  pollFirebaseSync();
 }
 
 async function pollFirebaseSync() {
@@ -3735,7 +3848,7 @@ function getFirebaseSettingsSilently() {
 
 function mergeSyncedPayload(payload, options = {}) {
   const localPhotos = state.photos;
-  const local = makeJsonSafe(state);
+  const local = options.firstPull ? removeStarterSampleRecords(makeJsonSafe(state)) : makeJsonSafe(state);
   const rawRemote = getPayloadData(payload);
   const remote = migrateState(rawRemote);
   const mergeOptions = { ...options, rawRemote };
@@ -3788,7 +3901,7 @@ function mergeStates(local, remote, options = {}) {
   const chooseDefaultSection = (sectionName, localSection, remoteSection) =>
     preferRemoteDefaults && remoteHasSection(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
-  const deletedRecordIds = Array.from(new Set(local.deletedRecordIds || []));
+  const deletedRecordIds = options.preserveRemoteRecords ? [] : Array.from(new Set(local.deletedRecordIds || []));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
   merged.owner = chooseDefaultSection("owner", local.owner, remote.owner);
   merged.profile = chooseDefaultSection("profile", local.profile, remote.profile);
@@ -3822,7 +3935,21 @@ function chooseLatestSection(localSection = {}, remoteSection = {}) {
 }
 
 function chooseRemoteSection(localSection = {}, remoteSection = {}) {
-  return { ...localSection, ...remoteSection };
+  return { ...remoteSection };
+}
+
+function removeStarterSampleRecords(sourceState) {
+  const starterIds = new Set(["sample-1", "sample-2", "sample-3", "sample-4", "sample-5", "sample-6"]);
+  const records = Object.fromEntries(
+    Object.entries(sourceState.records || {})
+      .map(([date, list]) => [date, (list || []).filter((record) => !starterIds.has(record.id))])
+      .filter(([, list]) => list.length)
+  );
+  return {
+    ...sourceState,
+    records,
+    deletedRecordIds: (sourceState.deletedRecordIds || []).filter((id) => !starterIds.has(id)),
+  };
 }
 
 function hasMergedStateChanges(local, merged) {
@@ -4082,6 +4209,7 @@ function handleTouchEnd(event) {
 }
 
 async function refreshFromPullGesture() {
+  refreshAppForCurrentDay();
   if (!hasFirebaseSettings()) {
     refreshCurrentView();
     showToast("Refreshed this phone. Add Firebase sync settings to pull shared data.");
@@ -4090,6 +4218,7 @@ async function refreshFromPullGesture() {
 
   showToast("Pulling latest puppy book...");
   await pullFirebaseSync();
+  refreshTodayContext({ resetMainDate: currentView === "main" });
   refreshCurrentView();
   showToast("Refresh complete.");
 }
