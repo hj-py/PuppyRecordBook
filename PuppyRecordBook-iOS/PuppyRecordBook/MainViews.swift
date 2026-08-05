@@ -89,6 +89,11 @@ struct CalendarGrid: View {
                         VStack(spacing: 4) {
                             Text("\(Calendar.current.component(.day, from: date))")
                                 .font(.caption.bold())
+                            if store.isBookmarked(date) {
+                                Image(systemName: "star.fill")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(Color(red: 0.77, green: 0.54, blue: 0.12))
+                            }
                             HStack(spacing: 2) {
                                 ForEach(store.records(on: date).prefix(3)) { _ in
                                     Circle().frame(width: 5, height: 5)

@@ -12,12 +12,18 @@ final class PuppyStore: ObservableObject {
 
     private let saveURL: URL
     private let calendar = Calendar.current
+    private let appGroupID = "group.com.hjpy.PuppyRecordBook"
+    private var watchBridge: WatchConnectivityBridge?
 
     init() {
-        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         saveURL = directory.appendingPathComponent("puppy-record-book.json")
 
-        if let loaded = try? Data(contentsOf: saveURL),
+        if let loaded = UserDefaults(suiteName: appGroupID)?.data(forKey: "puppy-record-book-data"),
+           let decoded = try? JSONDecoder.puppyDecoder.decode(PuppyData.self, from: loaded) {
+            data = decoded
+        } else if let loaded = try? Data(contentsOf: saveURL),
            let decoded = try? JSONDecoder.puppyDecoder.decode(PuppyData.self, from: loaded) {
             data = decoded
         } else {
@@ -57,6 +63,70 @@ final class PuppyStore: ObservableObject {
         }
     }
 
+    func quickLog(_ type: RecordType) {
+        let now = Date()
+        switch type {
+        case .food:
+            addRecord(date: now, time: now, type: .food, amount: "Food", note: "Quick log")
+        case .water:
+            addRecord(date: now, time: now, type: .water, amount: "Water", note: "Quick log")
+        case .pee:
+            addRecord(date: now, time: now, type: .pee, amount: "Quick log", note: "")
+        case .poop:
+            addRecord(date: now, time: now, type: .poop, amount: "Quick log", note: "")
+        case .walk, .play, .sleep, .train, .box:
+            toggleTimer(type)
+        default:
+            addRecord(date: now, time: now, type: type, amount: "Quick log", note: "")
+        }
+    }
+
+    func toggleTimer(_ type: RecordType) {
+        guard type.isTimed else { return }
+        let now = Date()
+        if let start = data.activeSessions[type] {
+            let minutes = max(1, Int(now.timeIntervalSince(start) / 60))
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            formatter.dateStyle = .none
+            data.records.append(
+                PuppyRecord(
+                    date: start,
+                    time: start,
+                    type: type,
+                    amount: "\(minutes) min",
+                    note: "\(formatter.string(from: start)) - \(formatter.string(from: now))",
+                    startTime: start,
+                    endTime: now
+                )
+            )
+            data.activeSessions[type] = nil
+        } else {
+            data.activeSessions[type] = now
+        }
+    }
+
+    func activeDurationText(for type: RecordType) -> String? {
+        guard let start = data.activeSessions[type] else { return nil }
+        let minutes = max(0, Int(Date().timeIntervalSince(start) / 60))
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return hours > 0 ? "\(hours)h \(rest)m" : "\(rest)m"
+    }
+
+    func toggleBookmark(for date: Date) {
+        let startOfDay = calendar.startOfDay(for: date)
+        if data.bookmarkedDays.contains(where: { calendar.isDate($0, inSameDayAs: startOfDay) }) {
+            data.bookmarkedDays.removeAll { calendar.isDate($0, inSameDayAs: startOfDay) }
+        } else {
+            data.bookmarkedDays.append(startOfDay)
+        }
+    }
+
+    func isBookmarked(_ date: Date) -> Bool {
+        data.bookmarkedDays.contains { calendar.isDate($0, inSameDayAs: date) }
+    }
+
     func deleteRecord(_ record: PuppyRecord) {
         data.records.removeAll { $0.id == record.id }
         syncWeightFromLatestRecord()
@@ -86,6 +156,12 @@ final class PuppyStore: ObservableObject {
             self.scheduleFoodNotifications()
             self.scheduleSchoolNotification()
             self.scheduleVaccineNotifications()
+        }
+    }
+
+    func startWatchConnectivity() {
+        if watchBridge == nil {
+            watchBridge = WatchConnectivityBridge(store: self)
         }
     }
 
@@ -153,6 +229,7 @@ final class PuppyStore: ObservableObject {
     private func save() {
         if let encoded = try? JSONEncoder.puppyEncoder.encode(data) {
             try? encoded.write(to: saveURL, options: [.atomic])
+            UserDefaults(suiteName: appGroupID)?.set(encoded, forKey: "puppy-record-book-data")
         }
     }
 

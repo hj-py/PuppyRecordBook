@@ -8,6 +8,9 @@ struct PuppyRecordBookApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .onAppear {
+                    store.startWatchConnectivity()
+                }
         }
     }
 }

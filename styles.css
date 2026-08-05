@@ -80,6 +80,32 @@ button {
   box-shadow: 0 10px 24px rgba(37, 35, 31, 0.2);
 }
 
+.pull-refresh-indicator {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  z-index: 30;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px 13px;
+  border: 1px solid rgba(97, 120, 97, 0.3);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.97);
+  color: var(--leaf-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+  box-shadow: 0 8px 22px rgba(37, 35, 31, 0.18);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.pull-refresh-indicator.ready {
+  background: var(--leaf);
+  color: #fffdf8;
+}
+
 .day-heading,
 .section-title {
   display: flex;

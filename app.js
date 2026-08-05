@@ -1,5 +1,6 @@
 const storageKey = "puppy-record-book-state";
 const backupStorageKey = "puppy-record-book-state-backups";
+const pendingSyncStorageKey = "puppy-record-book-firebase-pending";
 
 const typeConfig = {
   walk: { label: "Walk", icon: "W", color: "#617861", amount: "Minutes", placeholder: "e.g. 30 min" },
@@ -84,6 +85,11 @@ let currentView = "main";
 let touchStartX = 0;
 let touchStartY = 0;
 let touchStartScrollY = 0;
+let touchMaxPullY = 0;
+let touchMaxHorizontal = 0;
+let touchTrackingPull = false;
+let touchGestureActive = false;
+let pullRefreshInProgress = false;
 let editingRecordId = null;
 let firebaseServices = null;
 let autoSyncTimer = null;
@@ -92,6 +98,8 @@ let firebaseRetryTimer = null;
 let firebaseRetryCount = 0;
 let activeTimerInterval = null;
 let autoSyncInProgress = false;
+let autoSyncQueued = false;
+let localChangeRevision = hasStoredPendingFirebasePush() ? 1 : 0;
 let firebasePollInProgress = false;
 let importInProgress = false;
 let persistOptions = {};
@@ -102,6 +110,7 @@ let homeBookmarkMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedBookmarkYear = today.getFullYear();
 
 const elements = {
+  pullRefreshIndicator: document.querySelector("#pullRefreshIndicator"),
   appToast: document.querySelector("#appToast"),
   mainView: document.querySelector("#mainView"),
   dayView: document.querySelector("#dayView"),
@@ -529,7 +538,9 @@ function bindEvents() {
   });
 
   document.addEventListener("touchstart", handleTouchStart, { passive: true });
+  document.addEventListener("touchmove", handleTouchMove, { passive: true });
   document.addEventListener("touchend", handleTouchEnd, { passive: true });
+  document.addEventListener("touchcancel", cancelPullGesture, { passive: true });
 }
 
 function navigateToView(view) {
@@ -3528,9 +3539,10 @@ function showToast(message, duration = 3200) {
 async function pushFirebaseSync() {
   const settings = validateFirebaseSettings();
   if (!settings) {
-    return;
+    return false;
   }
 
+  const syncingRevision = localChangeRevision;
   renderSyncStatus("Pushing to Firebase...");
   try {
     const services = await getFirebaseServices(settings);
@@ -3538,27 +3550,30 @@ async function pushFirebaseSync() {
     const payload = await writeMergedFirebasePayload(services, ref);
     await verifyFirebaseWrite(services, ref, payload);
     state.sync.lastSync = new Date().toLocaleString();
-    persist();
-    clearFirebaseRetry();
+    persist({ skipAutoSync: true });
+    finishSuccessfulFirebaseOperation(syncingRevision);
     renderSyncStatus(`Pushed to Firebase sync code "${state.sync.code}".`);
+    return true;
   } catch (error) {
     queueFirebaseRetry(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
+    return false;
   }
 }
 
-async function pullFirebaseSync() {
+async function pullFirebaseSync({ confirmPending = true } = {}) {
   const settings = validateFirebaseSettings();
   if (!settings) {
-    return;
+    return false;
   }
   const pendingLocalPush = hasPendingFirebasePush();
-  if (pendingLocalPush) {
+  const syncingRevision = localChangeRevision;
+  if (pendingLocalPush && confirmPending) {
     const shouldMerge = window.confirm(
       "This device has local changes that failed to push. Pulling now will compare this device with Firebase, keep local-only records, keep Firebase-only records, and write the merged puppy book back to Firebase. Continue?"
     );
     if (!shouldMerge) {
       renderSyncStatus("Pull cancelled. Local records are still kept on this device.");
-      return;
+      return false;
     }
   }
 
@@ -3570,35 +3585,55 @@ async function pullFirebaseSync() {
     const result = await mergeFirebasePull(services, ref, { preferRemoteDefaults: true, firstPull, preserveRemoteRecords: true });
     if (!result.found) {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
-      return;
+      return false;
     }
     await verifyFirebaseWrite(services, ref, result.payload);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
-    clearFirebaseRetry();
+    finishSuccessfulFirebaseOperation(syncingRevision);
     renderSyncStatus(
       firstPull
         ? "First Firebase pull complete. Profile and default settings came from Firebase; starter sample records were removed."
         : `Merge complete. Added ${result.summary.localOnly} local-only records and kept ${result.summary.remoteOnly} Firebase-only records.`
     );
+    return true;
   } catch (error) {
-    renderSyncStatus(`Firebase pull failed: ${getFirebaseErrorMessage(error)}`);
+    const message = `Firebase pull failed: ${getFirebaseErrorMessage(error)}`;
+    if (pendingLocalPush) {
+      queueFirebaseRetry(message);
+    } else {
+      renderSyncStatus(message);
+      showToast(message, 9000);
+    }
+    return false;
   }
 }
 
-function scheduleAutoFirebaseSync() {
-  if (importInProgress || persistOptions.skipAutoSync || autoSyncInProgress || !hasFirebaseSettings()) {
+function scheduleAutoFirebaseSync(delay = 900) {
+  if (importInProgress || persistOptions.skipAutoSync || !hasFirebaseSettings()) {
+    return;
+  }
+  if (autoSyncInProgress) {
+    autoSyncQueued = true;
     return;
   }
   window.clearTimeout(autoSyncTimer);
-  autoSyncTimer = window.setTimeout(autoFirebaseSync, 1800);
+  autoSyncTimer = window.setTimeout(autoFirebaseSync, delay);
 }
 
 async function autoFirebaseSync() {
-  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress) {
+  if (importInProgress || !hasFirebaseSettings()) {
     return;
   }
+  if (autoSyncInProgress) {
+    autoSyncQueued = true;
+    return;
+  }
+  autoSyncTimer = null;
   autoSyncInProgress = true;
+  autoSyncQueued = false;
+  const syncingRevision = localChangeRevision;
+  let syncSucceeded = false;
   renderSyncStatus("Auto-syncing with Firebase...");
   try {
     const settings = validateFirebaseSettings();
@@ -3611,16 +3646,22 @@ async function autoFirebaseSync() {
     await verifyFirebaseWrite(services, ref, payload);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
-    clearFirebaseRetry();
+    syncSucceeded = true;
+    finishSuccessfulFirebaseOperation(syncingRevision);
     renderSyncStatus(`Auto-synced Firebase at ${state.sync.lastSync}.`);
+    showToast("Saved and synced with Firebase.", 1800);
   } catch (error) {
     queueFirebaseRetry(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
   } finally {
     autoSyncInProgress = false;
+    if (syncSucceeded && (autoSyncQueued || localChangeRevision > syncingRevision || hasStoredPendingFirebasePush())) {
+      scheduleAutoFirebaseSync(350);
+    }
   }
 }
 
 function queueFirebaseRetry(message) {
+  markFirebasePushPending();
   if (!hasFirebaseSettings()) {
     renderSyncStatus(`${message} Add sync settings, then try again.`);
     showToast(`${message}. Add sync settings, then try again.`, 9000);
@@ -3633,19 +3674,55 @@ function queueFirebaseRetry(message) {
   showToast(retryMessage, 9000);
   window.clearTimeout(firebaseRetryTimer);
   firebaseRetryTimer = window.setTimeout(() => {
+    firebaseRetryTimer = null;
     renderSyncStatus(`Retrying Firebase push (${firebaseRetryCount})...`);
     autoFirebaseSync();
   }, delay);
 }
 
 function hasPendingFirebasePush() {
-  return firebaseRetryCount > 0 || Boolean(firebaseRetryTimer);
+  return hasStoredPendingFirebasePush() || firebaseRetryCount > 0 || Boolean(firebaseRetryTimer);
 }
 
 function clearFirebaseRetry() {
   firebaseRetryCount = 0;
   window.clearTimeout(firebaseRetryTimer);
   firebaseRetryTimer = null;
+}
+
+function hasStoredPendingFirebasePush() {
+  try {
+    return localStorage.getItem(pendingSyncStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markFirebasePushPending() {
+  try {
+    localStorage.setItem(pendingSyncStorageKey, "1");
+  } catch {
+    // The main state save reports storage failures separately.
+  }
+}
+
+function markFirebasePushComplete() {
+  try {
+    localStorage.removeItem(pendingSyncStorageKey);
+  } catch {
+    // A later app resume will safely retry if this flag cannot be cleared.
+  }
+}
+
+function finishSuccessfulFirebaseOperation(syncingRevision) {
+  clearFirebaseRetry();
+  if (localChangeRevision === syncingRevision) {
+    markFirebasePushComplete();
+    return true;
+  }
+  markFirebasePushPending();
+  autoSyncQueued = true;
+  return false;
 }
 
 async function writeMergedFirebasePayload(services, ref) {
@@ -3805,11 +3882,25 @@ function startFirebasePolling() {
       handleAppResume();
     }
   });
+  window.addEventListener("online", () => {
+    if (hasPendingFirebasePush()) {
+      scheduleAutoFirebaseSync(150);
+    } else {
+      pollFirebaseSync();
+    }
+  });
+  if (hasStoredPendingFirebasePush()) {
+    scheduleAutoFirebaseSync(500);
+  }
 }
 
 function handleAppResume() {
   refreshAppForCurrentDay();
-  pollFirebaseSync();
+  if (hasPendingFirebasePush()) {
+    scheduleAutoFirebaseSync(250);
+  } else {
+    pollFirebaseSync();
+  }
 }
 
 async function pollFirebaseSync() {
@@ -4174,14 +4265,47 @@ function getFirebaseErrorMessage(error) {
 }
 
 function handleTouchStart(event) {
+  if (event.touches.length !== 1 || pullRefreshInProgress) {
+    touchGestureActive = false;
+    touchTrackingPull = false;
+    return;
+  }
+  touchGestureActive = true;
   const touch = event.changedTouches[0];
   touchStartX = touch.clientX;
   touchStartY = touch.clientY;
-  touchStartScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  touchStartScrollY = Math.max(0, window.scrollY || document.scrollingElement?.scrollTop || document.documentElement.scrollTop || 0);
+  touchMaxPullY = 0;
+  touchMaxHorizontal = 0;
+  touchTrackingPull = touchStartScrollY <= 8 && !isEditableElement(event.target);
+}
+
+function handleTouchMove(event) {
+  if (!touchTrackingPull || event.touches.length !== 1) {
+    return;
+  }
+  const touch = event.touches[0];
+  const pullDistance = touch.clientY - touchStartY;
+  const horizontalDistance = Math.abs(touch.clientX - touchStartX);
+  touchMaxPullY = Math.max(touchMaxPullY, pullDistance);
+  touchMaxHorizontal = Math.max(touchMaxHorizontal, horizontalDistance);
+
+  if (touchMaxPullY < 24 || touchMaxHorizontal > 80) {
+    hidePullRefreshIndicator();
+    return;
+  }
+  const ready = touchMaxPullY >= 62;
+  elements.pullRefreshIndicator.textContent = ready ? "Release to refresh and sync" : "Keep pulling to refresh";
+  elements.pullRefreshIndicator.classList.toggle("ready", ready);
+  elements.pullRefreshIndicator.hidden = false;
 }
 
 function handleTouchEnd(event) {
-  if (isEditableElement(event.target)) {
+  if (!touchGestureActive) {
+    return;
+  }
+  touchGestureActive = false;
+  if (!touchTrackingPull && isEditableElement(event.target)) {
     return;
   }
 
@@ -4189,7 +4313,9 @@ function handleTouchEnd(event) {
   const deltaX = touch.clientX - touchStartX;
   const rawDeltaY = touch.clientY - touchStartY;
   const deltaY = Math.abs(rawDeltaY);
-  const pullDown = touchStartScrollY <= 4 && rawDeltaY > 95 && Math.abs(deltaX) < 70;
+  const pullDown = touchTrackingPull && Math.max(rawDeltaY, touchMaxPullY) >= 62 && Math.max(Math.abs(deltaX), touchMaxHorizontal) < 80;
+  hidePullRefreshIndicator();
+  touchTrackingPull = false;
 
   if (pullDown) {
     refreshFromPullGesture();
@@ -4208,19 +4334,40 @@ function handleTouchEnd(event) {
   }
 }
 
+function cancelPullGesture() {
+  touchGestureActive = false;
+  touchTrackingPull = false;
+  hidePullRefreshIndicator();
+}
+
+function hidePullRefreshIndicator() {
+  elements.pullRefreshIndicator.hidden = true;
+  elements.pullRefreshIndicator.classList.remove("ready");
+}
+
 async function refreshFromPullGesture() {
-  refreshAppForCurrentDay();
-  if (!hasFirebaseSettings()) {
-    refreshCurrentView();
-    showToast("Refreshed this phone. Add Firebase sync settings to pull shared data.");
+  if (pullRefreshInProgress) {
     return;
   }
+  pullRefreshInProgress = true;
+  refreshAppForCurrentDay();
+  try {
+    if (!hasFirebaseSettings()) {
+      refreshCurrentView();
+      showToast("Refreshed this phone. Add Firebase sync settings to pull shared data.");
+      return;
+    }
 
-  showToast("Pulling latest puppy book...");
-  await pullFirebaseSync();
-  refreshTodayContext({ resetMainDate: currentView === "main" });
-  refreshCurrentView();
-  showToast("Refresh complete.");
+    showToast(hasPendingFirebasePush() ? "Merging saved phone data with Firebase..." : "Pulling latest puppy book...");
+    const refreshed = await pullFirebaseSync({ confirmPending: false });
+    refreshTodayContext({ resetMainDate: currentView === "main" });
+    refreshCurrentView();
+    if (refreshed) {
+      showToast("Refresh and sync complete.");
+    }
+  } finally {
+    pullRefreshInProgress = false;
+  }
 }
 
 function isEditableElement(target) {
@@ -4620,6 +4767,10 @@ function persist(options = {}) {
     renderSyncStatus("Local save failed. Do not close the app; export your records and free device storage.");
     showToast("Local save failed. Do not close the app; export your records first.", 12000);
   } else {
+    if (!options.skipAutoSync) {
+      localChangeRevision += 1;
+      markFirebasePushPending();
+    }
     if (!options.skipRecoveryBackup) {
       createLocalBackup("local save");
     }
@@ -4839,7 +4990,10 @@ function registerServiceWorker() {
     return;
   }
 
-  navigator.serviceWorker.register("./sw.js").catch(() => {
-    // Offline support is a nice-to-have; the app should still run without it.
-  });
+  navigator.serviceWorker
+    .register("./sw.js", { updateViaCache: "none" })
+    .then((registration) => registration.update())
+    .catch(() => {
+      // Offline support is a nice-to-have; the app should still run without it.
+    });
 }

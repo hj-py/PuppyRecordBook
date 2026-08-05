@@ -1,4 +1,4 @@
-const cacheName = "puppy-record-book-v92";
+const cacheName = "puppy-record-book-v93";
 const appShell = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg", "./apple-touch-icon-v34.png"];
 
 self.addEventListener("install", (event) => {
@@ -20,14 +20,26 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (new URL(event.request.url).origin !== self.location.origin) {
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) =>
-      cached ||
-      fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(cacheName).then((cache) => cache.put(event.request, copy));
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(cacheName).then((cache) => cache.put(event.request, copy));
+        }
         return response;
       })
-    )
+      .catch(() =>
+        caches.match(event.request).then((cached) => {
+          if (cached) {
+            return cached;
+          }
+          return event.request.mode === "navigate" ? caches.match("./index.html") : Response.error();
+        })
+      )
   );
 });

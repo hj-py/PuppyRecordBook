@@ -37,6 +37,13 @@ struct DayRecordView: View {
             HStack {
                 Text("Add data").font(.headline.bold())
                 Spacer()
+                Button {
+                    store.toggleBookmark(for: date)
+                } label: {
+                    Label(store.isBookmarked(date) ? "Starred" : "Star", systemImage: store.isBookmarked(date) ? "star.fill" : "star")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
                 PhotosPicker(selection: $selectedPhoto, matching: .images) {
                     Text("Photo").font(.caption.bold())
                 }
@@ -46,7 +53,7 @@ struct DayRecordView: View {
             Picker("Type", selection: $type) {
                 ForEach(RecordType.allCases) { Text($0.title).tag($0) }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             DatePicker("Time", selection: $time, displayedComponents: .hourAndMinute)
             TextField(type.amountLabel, text: $amount)
                 .textFieldStyle(.roundedBorder)
