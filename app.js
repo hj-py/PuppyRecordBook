@@ -76,6 +76,7 @@ const defaultPhoto =
 
 let today = new Date();
 const state = loadState();
+let lastPersistedStateJson = JSON.stringify(state);
 let visibleMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedDate = toKey(today);
 let activeType = "walk";
@@ -93,14 +94,15 @@ let pullRefreshInProgress = false;
 let editingRecordId = null;
 let firebaseServices = null;
 let autoSyncTimer = null;
-let firebasePollTimer = null;
 let firebaseRetryTimer = null;
 let firebaseRetryCount = 0;
 let activeTimerInterval = null;
 let autoSyncInProgress = false;
 let autoSyncQueued = false;
 let localChangeRevision = hasStoredPendingFirebasePush() ? 1 : 0;
-let firebasePollInProgress = false;
+let resumeSyncInProgress = false;
+let lastResumeSyncAt = 0;
+let appWasHidden = document.hidden;
 let importInProgress = false;
 let persistOptions = {};
 let selectedStatusYear = today.getFullYear();
@@ -237,21 +239,25 @@ const elements = {
   schoolEndDate: document.querySelector("#schoolEndDate"),
   schoolReminderList: document.querySelector("#schoolReminderList"),
   enableFoodAlarm: document.querySelector("#enableFoodAlarm"),
+  foodTargetMode: document.querySelector("#foodTargetMode"),
   foodType: document.querySelector("#foodType"),
+  foodType2: document.querySelector("#foodType2"),
   snackList: document.querySelector("#snackList"),
   foodDailyTarget: document.querySelector("#foodDailyTarget"),
   foodExpectedWeight: document.querySelector("#foodExpectedWeight"),
   foodEstimatedWeight: document.querySelector("#foodEstimatedWeight"),
   foodUseEstimatedWeight: document.querySelector("#foodUseEstimatedWeight"),
-  foodAutoTarget: document.querySelector("#foodAutoTarget"),
   foodRecommendationStatus: document.querySelector("#foodRecommendationStatus"),
   foodReminderMinutes: document.querySelector("#foodReminderMinutes"),
   foodTimeMorning: document.querySelector("#foodTimeMorning"),
   foodTimeAfternoon: document.querySelector("#foodTimeAfternoon"),
   foodTimeEvening: document.querySelector("#foodTimeEvening"),
   foodAmountMorning: document.querySelector("#foodAmountMorning"),
+  foodAmountMorning2: document.querySelector("#foodAmountMorning2"),
   foodAmountAfternoon: document.querySelector("#foodAmountAfternoon"),
+  foodAmountAfternoon2: document.querySelector("#foodAmountAfternoon2"),
   foodAmountEvening: document.querySelector("#foodAmountEvening"),
+  foodAmountEvening2: document.querySelector("#foodAmountEvening2"),
   foodReminderList: document.querySelector("#foodReminderList"),
   installAppButton: document.querySelector("#installAppButton"),
   installStatus: document.querySelector("#installStatus"),
@@ -285,7 +291,7 @@ function init() {
   registerServiceWorker();
   initPwaInstall();
   startAlarmTimer();
-  startFirebasePolling();
+  startFirebaseSyncLifecycle();
   startActiveSessionTimer();
   renderMain();
 }
@@ -467,7 +473,7 @@ function bindEvents() {
     button.addEventListener("click", () => handleQuickLog(button.dataset.action));
   });
 
-  elements.puppyName.addEventListener("input", () => {
+  elements.puppyName.addEventListener("change", () => {
     state.profile.name = elements.puppyName.value.trim() || "Puppy";
     state.profile.updatedAt = new Date().toISOString();
     persist();
@@ -480,16 +486,26 @@ function bindEvents() {
     recordMainWeightChange();
   });
 
+  let profileSaveTimer = null;
   const handleProfileInput = () => {
+    if (profileSaveTimer) {
+      clearTimeout(profileSaveTimer);
+      profileSaveTimer = null;
+    }
     syncProfileFromForm();
     persist();
     hydrateMainProfile();
     renderAge();
     renderInsight();
     renderReminderSections();
+    updateFoodTargetModeUI();
+  };
+  const scheduleProfileInput = () => {
+    clearTimeout(profileSaveTimer);
+    profileSaveTimer = setTimeout(handleProfileInput, 450);
   };
   getProfileInputs().forEach((input) => {
-    input.addEventListener("input", handleProfileInput);
+    input.addEventListener("input", scheduleProfileInput);
     input.addEventListener("change", handleProfileInput);
   });
 
@@ -1109,7 +1125,9 @@ function snackMatchesCurrentFood(record) {
   }
   const snack = getSnackName(record);
   const product = getJoseraProductConfig();
-  return [state.foodSettings?.type, product.label, ...(product.aliases || [])].some((candidate) => productNameMatches(snack, candidate));
+  return [state.foodSettings?.type, state.foodSettings?.type2, product.label, ...(product.aliases || [])].some((candidate) =>
+    productNameMatches(snack, candidate)
+  );
 }
 
 function getVetReminderMinutes(record) {
@@ -1610,17 +1628,41 @@ function getElapsedSessionText(session) {
 
 function recordFoodNow() {
   const meal = getCurrentMealSetting();
-  const amount = meal.amount || "Food";
-  const note = [state.foodSettings.type, meal.label].filter(Boolean).join(" - ");
-  addQuickRecord("food", amount, note || "Quick food log", new Date(), { foodKind: "food" });
+  const components = [
+    { name: state.foodSettings.type || "Food 1", amount: meal.amount || "" },
+    { name: state.foodSettings.type2 || "Food 2", amount: meal.amount2 || "" },
+  ].filter((component) => component.amount);
+  const totalGrams = components.reduce((total, component) => total + parseAmountForUnit(component.amount, "g"), 0);
+  const amount = totalGrams > 0 ? `${formatFoodGrams(totalGrams)}g` : components.map((component) => component.amount).join(" + ") || "Food";
+  const mixture = components.map((component) => `${component.amount} ${component.name}`.trim()).join(" + ");
+  const note = [mixture, meal.label].filter(Boolean).join(" - ");
+  addQuickRecord("food", amount, note || "Food", new Date(), { foodKind: "food", foodComponents: components });
 }
 
 function getCurrentMealSetting() {
   const now = new Date();
   const options = [
-    { key: "morning", label: "Morning", time: state.foodTimes.morning, amount: state.foodSettings.amounts.morning },
-    { key: "afternoon", label: "Afternoon", time: state.foodTimes.afternoon, amount: state.foodSettings.amounts.afternoon },
-    { key: "evening", label: "Evening", time: state.foodTimes.evening, amount: state.foodSettings.amounts.evening },
+    {
+      key: "morning",
+      label: "Morning",
+      time: state.foodTimes.morning,
+      amount: state.foodSettings.amounts.morning,
+      amount2: state.foodSettings.secondAmounts.morning,
+    },
+    {
+      key: "afternoon",
+      label: "Afternoon",
+      time: state.foodTimes.afternoon,
+      amount: state.foodSettings.amounts.afternoon,
+      amount2: state.foodSettings.secondAmounts.afternoon,
+    },
+    {
+      key: "evening",
+      label: "Evening",
+      time: state.foodTimes.evening,
+      amount: state.foodSettings.amounts.evening,
+      amount2: state.foodSettings.secondAmounts.evening,
+    },
   ].filter((item) => item.time);
 
   if (!options.length) {
@@ -1630,6 +1672,19 @@ function getCurrentMealSetting() {
   return options
     .map((item) => ({ ...item, distance: Math.abs(minutesOfDay(item.time) - (now.getHours() * 60 + now.getMinutes())) }))
     .sort((a, b) => a.distance - b.distance)[0];
+}
+
+function formatFoodGrams(value) {
+  return Number.isInteger(value) ? String(value) : Number(value.toFixed(1)).toString();
+}
+
+function getFoodComponents(record) {
+  return Array.isArray(record?.foodComponents)
+    ? record.foodComponents
+        .map((component) => ({ name: String(component?.name || "").trim(), amount: String(component?.amount || "").trim() }))
+        .filter((component) => component.name || component.amount)
+        .slice(0, 2)
+    : [];
 }
 
 function minutesOfDay(time) {
@@ -2415,7 +2470,7 @@ function formatFoodProgress(records, dateKey = toKey(today)) {
 function getFoodDailyTarget(dateKey = toKey(today)) {
   const manualTarget = Number(state.foodSettings?.dailyTargetGrams);
   const recommendation = getJoseraRecommendation(dateKey);
-  if (state.foodSettings?.autoTarget && recommendation) {
+  if (getFoodTargetMode() === "josera" && recommendation) {
     return recommendation.targetGrams;
   }
   if (Number.isFinite(manualTarget) && manualTarget > 0) {
@@ -2426,7 +2481,7 @@ function getFoodDailyTarget(dateKey = toKey(today)) {
 
 function refreshFoodRecommendationIfNeeded(force = false) {
   updateEstimatedAdultWeightSetting();
-  if (!state.foodSettings.autoTarget) {
+  if (getFoodTargetMode() !== "josera") {
     renderFoodRecommendationStatus();
     return false;
   }
@@ -2462,14 +2517,19 @@ function renderFoodRecommendationStatus() {
     return;
   }
   updateFoodEstimateDisplay();
+  updateFoodTargetModeUI();
+  const targetMode = getFoodTargetMode();
   const recommendation = getJoseraRecommendation(toKey(today));
   if (!recommendation) {
-    elements.foodRecommendationStatus.textContent = "Josera recommendation unavailable for the current age/weight setting.";
+    elements.foodRecommendationStatus.textContent =
+      targetMode === "manual"
+        ? `Manual target: ${getFoodDailyTarget()}g/day.`
+        : "Josera recommendation unavailable for the current age/weight setting.";
     return;
   }
-  const mode = state.foodSettings.autoTarget ? "Auto weekly" : "Manual";
+  const mode = targetMode === "josera" ? "Josera weekly" : "Manual";
   const target = getFoodDailyTarget();
-  if (state.foodSettings.autoTarget && elements.foodDailyTarget) {
+  if (targetMode === "josera" && elements.foodDailyTarget) {
     elements.foodDailyTarget.value = target || "";
   }
   const estimate = getAdultWeightEstimate();
@@ -2478,7 +2538,25 @@ function renderFoodRecommendationStatus() {
     recommendation.enteredAdultWeightKg !== recommendation.adultWeightKg
       ? ` Calculator uses ${recommendation.adultWeightKg}kg from ${recommendation.enteredAdultWeightKg.toFixed(1)}kg.`
       : "";
-  elements.foodRecommendationStatus.innerHTML = `${escapeHtml(mode)} target: ${escapeHtml(String(target))}g/day. Josera ${escapeHtml(recommendation.product.label)} calculator estimate for ${escapeHtml(String(recommendation.ageWeeks))} weeks and ${escapeHtml(String(recommendation.adultWeightKg))}kg expected grown weight: ${escapeHtml(String(recommendation.targetGrams))}g/day.${escapeHtml(parsedText)}${escapeHtml(estimateText)} <a href="${joseraFeedingSourceUrl}" target="_blank" rel="noreferrer">Josera calculator</a> - <a href="${recommendation.product.guideUrl}" target="_blank" rel="noreferrer">${escapeHtml(recommendation.product.label)} guide</a>`;
+  const mixtureText = state.foodSettings.type2 ? " Mixed foods can have different calorie densities, so confirm the combined target with the food labels or your vet." : "";
+  const referenceText = targetMode === "manual" ? ` Josera reference for the current settings: ${recommendation.targetGrams}g/day.` : "";
+  elements.foodRecommendationStatus.innerHTML = `${escapeHtml(mode)} target: ${escapeHtml(String(target))}g/day.${escapeHtml(referenceText)} Josera ${escapeHtml(recommendation.product.label)} calculator estimate for ${escapeHtml(String(recommendation.ageWeeks))} weeks and ${escapeHtml(String(recommendation.adultWeightKg))}kg expected grown weight: ${escapeHtml(String(recommendation.targetGrams))}g/day.${escapeHtml(parsedText)}${escapeHtml(estimateText)}${escapeHtml(mixtureText)} <a href="${joseraFeedingSourceUrl}" target="_blank" rel="noreferrer">Josera calculator</a> - <a href="${recommendation.product.guideUrl}" target="_blank" rel="noreferrer">${escapeHtml(recommendation.product.label)} guide</a>`;
+}
+
+function getFoodTargetMode() {
+  return state.foodSettings?.targetMode === "manual" ? "manual" : "josera";
+}
+
+function updateFoodTargetModeUI() {
+  if (!elements.foodTargetMode || !elements.foodDailyTarget) {
+    return;
+  }
+  const isJosera = getFoodTargetMode() === "josera";
+  elements.foodTargetMode.value = isJosera ? "josera" : "manual";
+  elements.foodDailyTarget.readOnly = isJosera;
+  document.querySelectorAll(".josera-target-field").forEach((field) => {
+    field.hidden = !isJosera;
+  });
 }
 
 function getJoseraRecommendation(dateKey = toKey(today)) {
@@ -2721,21 +2799,25 @@ function hydrateProfileForm() {
   elements.enableVaccineAlarm.textContent = state.settings.vaccineAlarmEnabled ? "On" : "Enable";
   elements.enableSchoolAlarm.textContent = state.settings.schoolAlarmEnabled ? "On" : "Enable";
   elements.enableFoodAlarm.textContent = state.settings.foodAlarmEnabled ? "On" : "Enable";
+  elements.foodTargetMode.value = getFoodTargetMode();
   elements.foodType.value = state.foodSettings.type;
+  elements.foodType2.value = state.foodSettings.type2;
   if (document.activeElement !== elements.snackList) {
     elements.snackList.value = getSnackOptions().join("\n");
   }
   elements.foodDailyTarget.value = state.foodSettings.dailyTargetGrams || "";
   elements.foodExpectedWeight.value = state.foodSettings.expectedAdultWeightKg || 30;
   elements.foodUseEstimatedWeight.checked = Boolean(state.foodSettings.useEstimatedAdultWeight);
-  elements.foodAutoTarget.checked = Boolean(state.foodSettings.autoTarget);
   elements.foodReminderMinutes.value = state.foodSettings.reminderMinutes;
   elements.foodTimeMorning.value = state.foodTimes.morning;
   elements.foodTimeAfternoon.value = state.foodTimes.afternoon;
   elements.foodTimeEvening.value = state.foodTimes.evening;
   elements.foodAmountMorning.value = state.foodSettings.amounts.morning;
+  elements.foodAmountMorning2.value = state.foodSettings.secondAmounts.morning;
   elements.foodAmountAfternoon.value = state.foodSettings.amounts.afternoon;
+  elements.foodAmountAfternoon2.value = state.foodSettings.secondAmounts.afternoon;
   elements.foodAmountEvening.value = state.foodSettings.amounts.evening;
+  elements.foodAmountEvening2.value = state.foodSettings.secondAmounts.evening;
   populateSnackSelect(elements.snackName, elements.snackName.value);
   populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
   renderFoodRecommendationStatus();
@@ -2774,7 +2856,10 @@ function syncProfileFromForm() {
   state.foodTimes.morning = elements.foodTimeMorning.value;
   state.foodTimes.afternoon = elements.foodTimeAfternoon.value;
   state.foodTimes.evening = elements.foodTimeEvening.value;
+  state.foodSettings.targetMode = elements.foodTargetMode.value === "manual" ? "manual" : "josera";
+  state.foodSettings.autoTarget = state.foodSettings.targetMode === "josera";
   state.foodSettings.type = elements.foodType.value.trim();
+  state.foodSettings.type2 = elements.foodType2.value.trim();
   const nextSnacks = normalizeSnackList(elements.snackList.value);
   if (JSON.stringify(nextSnacks) !== JSON.stringify(normalizeSnackList(state.foodSettings.snacks))) {
     state.foodSettings.snacksUpdatedAt = new Date().toISOString();
@@ -2785,11 +2870,13 @@ function syncProfileFromForm() {
   state.foodSettings.dailyTargetGrams = Math.max(0, Number(elements.foodDailyTarget.value) || 0);
   state.foodSettings.expectedAdultWeightKg = Math.max(5, Number(elements.foodExpectedWeight.value) || 30);
   state.foodSettings.useEstimatedAdultWeight = elements.foodUseEstimatedWeight.checked;
-  state.foodSettings.autoTarget = elements.foodAutoTarget.checked;
   state.foodSettings.reminderMinutes = Math.max(0, Math.min(180, Number(elements.foodReminderMinutes.value) || 0));
   state.foodSettings.amounts.morning = elements.foodAmountMorning.value.trim();
+  state.foodSettings.secondAmounts.morning = elements.foodAmountMorning2.value.trim();
   state.foodSettings.amounts.afternoon = elements.foodAmountAfternoon.value.trim();
+  state.foodSettings.secondAmounts.afternoon = elements.foodAmountAfternoon2.value.trim();
   state.foodSettings.amounts.evening = elements.foodAmountEvening.value.trim();
+  state.foodSettings.secondAmounts.evening = elements.foodAmountEvening2.value.trim();
   refreshFoodRecommendationIfNeeded();
   markSectionUpdatedAt(state.owner, before.owner, updatedAt);
   markSectionUpdatedAt(state.profile, before.profile, updatedAt);
@@ -2830,19 +2917,23 @@ function getProfileInputs() {
     elements.schoolEndDate,
     elements.rabiesDate,
     elements.rabiesValidUntil,
+    elements.foodTargetMode,
     elements.foodType,
+    elements.foodType2,
     elements.snackList,
     elements.foodDailyTarget,
     elements.foodExpectedWeight,
     elements.foodUseEstimatedWeight,
-    elements.foodAutoTarget,
     elements.foodReminderMinutes,
     elements.foodTimeMorning,
     elements.foodTimeAfternoon,
     elements.foodTimeEvening,
     elements.foodAmountMorning,
+    elements.foodAmountMorning2,
     elements.foodAmountAfternoon,
+    elements.foodAmountAfternoon2,
     elements.foodAmountEvening,
+    elements.foodAmountEvening2,
   ];
 }
 
@@ -3278,7 +3369,7 @@ function applySyncedPayload(payload, options = {}) {
 }
 
 function exportExcelData() {
-  const rows = [["Date", "Type", "Food kind", "Snack", "Time", "Start", "End", "Duration minutes", "Amount", "Accident", "Note"]];
+  const rows = [["Date", "Type", "Food kind", "Snack", "Time", "Start", "End", "Duration minutes", "Amount", "Food 1", "Food 1 amount", "Food 2", "Food 2 amount", "Accident", "Note"]];
   Object.entries(state.records)
     .sort(([a], [b]) => a.localeCompare(b))
     .forEach(([date, records]) => {
@@ -3286,6 +3377,7 @@ function exportExcelData() {
         .slice()
         .sort((a, b) => a.time.localeCompare(b.time))
         .forEach((record) => {
+          const foodComponents = getFoodComponents(record);
           rows.push([
             date,
             typeConfig[record.type]?.label || record.type,
@@ -3296,6 +3388,10 @@ function exportExcelData() {
             record.endTime || "",
             getRecordDuration(record) || "",
             record.amount || "",
+            foodComponents[0]?.name || "",
+            foodComponents[0]?.amount || "",
+            foodComponents[1]?.name || "",
+            foodComponents[1]?.amount || "",
             record.accident ? "yes" : "",
             record.note || "",
           ]);
@@ -3361,7 +3457,7 @@ function importExcelRows(rows) {
     throw new Error("no record rows found.");
   }
   const headers = rows[0].map((header) => header.trim().toLowerCase());
-  const columns = ["date", "type", "food kind", "snack", "snack counts as food", "time", "start", "end", "duration minutes", "amount", "accident", "note"];
+  const columns = ["date", "type", "food kind", "snack", "snack counts as food", "time", "start", "end", "duration minutes", "amount", "food 1", "food 1 amount", "food 2", "food 2 amount", "accident", "note"];
   const indexes = Object.fromEntries(columns.map((header) => [header, headers.indexOf(header)]));
   if (["date", "type", "time"].some((header) => indexes[header] < 0)) {
     throw new Error("CSV must use the exported columns.");
@@ -3392,6 +3488,13 @@ function importExcelRows(rows) {
           state.foodSettings.snacks = normalizeSnackList([...(state.foodSettings.snacks || []), record.snackName]);
           state.foodSettings.snacksUpdatedAt = new Date().toISOString();
         }
+      }
+      const components = [
+        { name: row[indexes["food 1"]] || "", amount: row[indexes["food 1 amount"]] || "" },
+        { name: row[indexes["food 2"]] || "", amount: row[indexes["food 2 amount"]] || "" },
+      ].filter((component) => String(component.name || component.amount).trim());
+      if (components.length) {
+        record.foodComponents = components;
       }
     }
     if (["pee", "poop"].includes(type) && indexes.accident >= 0) {
@@ -3582,7 +3685,11 @@ async function pullFirebaseSync({ confirmPending = true } = {}) {
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
     const firstPull = !state.sync.lastSync;
-    const result = await mergeFirebasePull(services, ref, { preferRemoteDefaults: true, firstPull, preserveRemoteRecords: true });
+    const result = await mergeFirebasePull(services, ref, {
+      preferRemoteDefaults: firstPull,
+      firstPull,
+      preserveRemoteRecords: firstPull,
+    });
     if (!result.found) {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
       return false;
@@ -3839,6 +3946,7 @@ function getRecordSignatures(records) {
         record.reminderMinutes || 0,
         record.foodKind || "",
         record.snackName || "",
+        JSON.stringify(getFoodComponents(record)),
         record.accident ? "1" : "0",
       ].join("|")
     )
@@ -3873,67 +3981,43 @@ function hasFirebaseSettings() {
   return Boolean(state.sync.code && state.sync.code.length >= 12 && state.sync.firebaseConfig);
 }
 
-function startFirebasePolling() {
-  window.clearInterval(firebasePollTimer);
-  firebasePollTimer = window.setInterval(pollFirebaseSync, 15000);
-  window.addEventListener("focus", handleAppResume);
+function startFirebaseSyncLifecycle() {
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
+    if (document.hidden) {
+      appWasHidden = true;
+    } else if (appWasHidden) {
+      appWasHidden = false;
       handleAppResume();
     }
   });
+  window.addEventListener("pageshow", (event) => handleAppResume({ force: Boolean(event.persisted) }));
   window.addEventListener("online", () => {
     if (hasPendingFirebasePush()) {
       scheduleAutoFirebaseSync(150);
-    } else {
-      pollFirebaseSync();
     }
   });
-  if (hasStoredPendingFirebasePush()) {
-    scheduleAutoFirebaseSync(500);
-  }
+  window.setTimeout(() => handleAppResume({ force: true }), 0);
 }
 
-function handleAppResume() {
+async function handleAppResume({ force = false } = {}) {
   refreshAppForCurrentDay();
+  const now = Date.now();
+  if (resumeSyncInProgress || autoSyncInProgress || (!force && now - lastResumeSyncAt < 2500)) {
+    return;
+  }
+  lastResumeSyncAt = now;
+  if (!hasFirebaseSettings()) {
+    return;
+  }
   if (hasPendingFirebasePush()) {
-    scheduleAutoFirebaseSync(250);
-  } else {
-    pollFirebaseSync();
-  }
-}
-
-async function pollFirebaseSync() {
-  if (importInProgress || !hasFirebaseSettings() || autoSyncInProgress || firebasePollInProgress || hasPendingFirebasePush()) {
+    scheduleAutoFirebaseSync(100);
     return;
   }
-
-  const settings = getFirebaseSettingsSilently();
-  if (!settings) {
-    return;
-  }
-
-  firebasePollInProgress = true;
+  resumeSyncInProgress = true;
   try {
-    const services = await getFirebaseServices(settings);
-    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
-    if (snapshot.exists()) {
-      mergeSyncedPayload(snapshot.data().bookData);
-      renderSyncStatus(`Checked Firebase sync at ${new Date().toLocaleTimeString()}.`);
-    }
-  } catch {
-    // Keep polling quiet so a temporary network issue does not interrupt logging.
+    await pullFirebaseSync({ confirmPending: false });
   } finally {
-    firebasePollInProgress = false;
-  }
-}
-
-function getFirebaseSettingsSilently() {
-  try {
-    const config = parseFirebaseConfig(state.sync.firebaseConfig);
-    return config.projectId ? config : null;
-  } catch {
-    return null;
+    resumeSyncInProgress = false;
   }
 }
 
@@ -4290,13 +4374,25 @@ function handleTouchMove(event) {
   touchMaxPullY = Math.max(touchMaxPullY, pullDistance);
   touchMaxHorizontal = Math.max(touchMaxHorizontal, horizontalDistance);
 
-  if (touchMaxPullY < 24 || touchMaxHorizontal > 80) {
+  if (touchMaxHorizontal > 96) {
     hidePullRefreshIndicator();
     return;
   }
-  const ready = touchMaxPullY >= 62;
-  elements.pullRefreshIndicator.textContent = ready ? "Release to refresh and sync" : "Keep pulling to refresh";
-  elements.pullRefreshIndicator.classList.toggle("ready", ready);
+  if (touchMaxPullY >= 44) {
+    touchTrackingPull = false;
+    touchGestureActive = false;
+    elements.pullRefreshIndicator.textContent = "Refreshing and merging...";
+    elements.pullRefreshIndicator.classList.add("ready");
+    elements.pullRefreshIndicator.hidden = false;
+    refreshFromPullGesture();
+    return;
+  }
+  if (touchMaxPullY < 14) {
+    hidePullRefreshIndicator();
+    return;
+  }
+  elements.pullRefreshIndicator.textContent = "Pull a little farther";
+  elements.pullRefreshIndicator.classList.remove("ready");
   elements.pullRefreshIndicator.hidden = false;
 }
 
@@ -4313,7 +4409,7 @@ function handleTouchEnd(event) {
   const deltaX = touch.clientX - touchStartX;
   const rawDeltaY = touch.clientY - touchStartY;
   const deltaY = Math.abs(rawDeltaY);
-  const pullDown = touchTrackingPull && Math.max(rawDeltaY, touchMaxPullY) >= 62 && Math.max(Math.abs(deltaX), touchMaxHorizontal) < 80;
+  const pullDown = touchTrackingPull && Math.max(rawDeltaY, touchMaxPullY) >= 44 && Math.max(Math.abs(deltaX), touchMaxHorizontal) < 96;
   hidePullRefreshIndicator();
   touchTrackingPull = false;
 
@@ -4367,6 +4463,7 @@ async function refreshFromPullGesture() {
     }
   } finally {
     pullRefreshInProgress = false;
+    hidePullRefreshIndicator();
   }
 }
 
@@ -4606,7 +4703,9 @@ function loadState() {
     schoolSchedule: { weekday: 6, time: "18:00", startDate: key, endDate: "", updatedAt: "" },
     foodTimes: { morning: "07:30", afternoon: "", evening: "18:30", updatedAt: "" },
     foodSettings: {
+      targetMode: "josera",
       type: "Josera YoungStar dry food",
+      type2: "",
       snacks: defaultSnackList,
       snacksUpdatedAt: "",
       reminderMinutes: 5,
@@ -4620,6 +4719,7 @@ function loadState() {
       recommendationRange: "205-240g",
       recommendationSource: "Josera YoungStar",
       amounts: { morning: "110g", afternoon: "", evening: "120g" },
+      secondAmounts: { morning: "", afternoon: "", evening: "" },
       updatedAt: "",
     },
     sync: { code: "", firebaseConfig: "", lastSync: "" },
@@ -4698,7 +4798,9 @@ function migrateState(value) {
       updatedAt: value.foodTimes?.updatedAt || "",
     },
     foodSettings: {
+      targetMode: value.foodSettings?.targetMode === "manual" || value.foodSettings?.autoTarget === false ? "manual" : "josera",
       type: value.foodSettings?.type || "",
+      type2: value.foodSettings?.type2 || "",
       snacks: migratedSnacks,
       snacksUpdatedAt: value.foodSettings?.snacksUpdatedAt || "",
       reminderMinutes: Number.isFinite(Number(value.foodSettings?.reminderMinutes)) ? Number(value.foodSettings.reminderMinutes) : 5,
@@ -4707,7 +4809,7 @@ function migrateState(value) {
       estimatedAdultWeightKg: Number.isFinite(Number(value.foodSettings?.estimatedAdultWeightKg)) ? Number(value.foodSettings.estimatedAdultWeightKg) : 0,
       estimatedAdultWeightConfidence: value.foodSettings?.estimatedAdultWeightConfidence || "",
       useEstimatedAdultWeight: Boolean(value.foodSettings?.useEstimatedAdultWeight),
-      autoTarget: value.foodSettings?.autoTarget !== false,
+      autoTarget: value.foodSettings?.targetMode ? value.foodSettings.targetMode !== "manual" : value.foodSettings?.autoTarget !== false,
       recommendationWeek: value.foodSettings?.recommendationWeek || "",
       recommendationRange: value.foodSettings?.recommendationRange || "",
       recommendationSource: value.foodSettings?.recommendationSource || "Josera YoungStar",
@@ -4715,6 +4817,11 @@ function migrateState(value) {
         morning: value.foodSettings?.amounts?.morning || "",
         afternoon: value.foodSettings?.amounts?.afternoon || "",
         evening: value.foodSettings?.amounts?.evening || "",
+      },
+      secondAmounts: {
+        morning: value.foodSettings?.secondAmounts?.morning || "",
+        afternoon: value.foodSettings?.secondAmounts?.afternoon || "",
+        evening: value.foodSettings?.secondAmounts?.evening || "",
       },
       updatedAt: value.foodSettings?.updatedAt || "",
     },
@@ -4746,16 +4853,22 @@ function migrateState(value) {
 
 function persist(options = {}) {
   persistOptions = options;
+  let serializedState = JSON.stringify(state);
+  if (!options.force && serializedState === lastPersistedStateJson) {
+    persistOptions = {};
+    return true;
+  }
   let saved = false;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(state));
+    localStorage.setItem(storageKey, serializedState);
     saved = true;
   } catch (error) {
     if (state.photos.length) {
       state.photos = [];
       elements.heroPhoto.src = defaultPhoto;
       try {
-        localStorage.setItem(storageKey, JSON.stringify(state));
+        serializedState = JSON.stringify(state);
+        localStorage.setItem(storageKey, serializedState);
         saved = true;
         showToast("Local storage was full, so the profile photo was removed. Records were kept.", 9000);
       } catch {
@@ -4767,6 +4880,7 @@ function persist(options = {}) {
     renderSyncStatus("Local save failed. Do not close the app; export your records and free device storage.");
     showToast("Local save failed. Do not close the app; export your records first.", 12000);
   } else {
+    lastPersistedStateJson = serializedState;
     if (!options.skipAutoSync) {
       localChangeRevision += 1;
       markFirebasePushPending();
@@ -4777,6 +4891,7 @@ function persist(options = {}) {
     scheduleAutoFirebaseSync();
   }
   persistOptions = {};
+  return saved;
 }
 
 function imageFileToProfileDataUrl(file) {

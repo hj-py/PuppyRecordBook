@@ -14,6 +14,11 @@ const typeConfig = {
 
 let firebaseServices = null;
 let syncTimer = null;
+let syncInProgress = false;
+let pullInProgress = false;
+let syncRetryDelay = 5000;
+const pendingSyncKey = "puppy-record-book-widget-sync-pending";
+let syncPending = localStorage.getItem(pendingSyncKey) === "1";
 const state = loadState();
 const elements = {
   widgetTitle: document.querySelector("#widgetTitle"),
@@ -38,9 +43,14 @@ function init() {
   elements.syncNow.addEventListener("click", syncNow);
   [elements.syncCode, elements.firebaseConfig].forEach((input) => input.addEventListener("input", saveSyncSettings));
   window.setInterval(render, 1000);
-  window.setInterval(pullQuietly, 15000);
+  window.addEventListener("focus", resumeSync);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      resumeSync();
+    }
+  });
   render();
-  pullQuietly();
+  resumeSync();
 }
 
 async function handleQuickAction(type) {
@@ -54,6 +64,7 @@ async function handleQuickAction(type) {
   } else {
     addQuickRecord(type, "", "");
   }
+  setSyncPending(true);
   persist();
   render();
   pushSoon();
@@ -86,19 +97,26 @@ function toggleTimedType(type) {
 
 function recordFoodNow() {
   const meal = getCurrentMealSetting();
-  const amount = meal.amount || "Food";
-  const note = [state.foodSettings?.type, meal.label].filter(Boolean).join(" - ");
-  addQuickRecord("food", amount, note);
+  const components = [
+    { name: state.foodSettings?.type || "Food 1", amount: meal.amount || "" },
+    { name: state.foodSettings?.type2 || "Food 2", amount: meal.amount2 || "" },
+  ].filter((component) => component.amount);
+  const totalGrams = components.reduce((total, component) => total + parseGrams(component.amount), 0);
+  const amount = totalGrams > 0 ? `${totalGrams}g` : components.map((component) => component.amount).join(" + ") || "Food";
+  const mixture = components.map((component) => `${component.amount} ${component.name}`.trim()).join(" + ");
+  const note = [mixture, meal.label].filter(Boolean).join(" - ");
+  addQuickRecord("food", amount, note, { foodKind: "food", foodComponents: components });
 }
 
 function getCurrentMealSetting() {
   const now = new Date();
   const foodTimes = state.foodTimes || {};
   const amounts = state.foodSettings?.amounts || {};
+  const secondAmounts = state.foodSettings?.secondAmounts || {};
   const options = [
-    { label: "Morning", time: foodTimes.morning, amount: amounts.morning },
-    { label: "Afternoon", time: foodTimes.afternoon, amount: amounts.afternoon },
-    { label: "Evening", time: foodTimes.evening, amount: amounts.evening },
+    { label: "Morning", time: foodTimes.morning, amount: amounts.morning, amount2: secondAmounts.morning },
+    { label: "Afternoon", time: foodTimes.afternoon, amount: amounts.afternoon, amount2: secondAmounts.afternoon },
+    { label: "Evening", time: foodTimes.evening, amount: amounts.evening, amount2: secondAmounts.evening },
   ].filter((item) => item.time);
   if (!options.length) {
     return { label: "Food", amount: "" };
@@ -109,7 +127,7 @@ function getCurrentMealSetting() {
     .sort((a, b) => a.distance - b.distance)[0];
 }
 
-function addQuickRecord(type, amount, note) {
+function addQuickRecord(type, amount, note, extra = {}) {
   const now = new Date();
   addRecord(toKey(now), {
     id: createId(),
@@ -117,8 +135,14 @@ function addQuickRecord(type, amount, note) {
     time: now.toTimeString().slice(0, 5),
     amount,
     note,
+    ...extra,
   });
   setStatus(`${typeConfig[type].label} saved.`);
+}
+
+function parseGrams(value) {
+  const match = String(value || "").match(/(\d+(?:[.,]\d+)?)/);
+  return match ? Number(match[1].replace(",", ".")) : 0;
 }
 
 function addRecord(dateKey, record) {
@@ -182,12 +206,38 @@ function pushSoon() {
   syncTimer = window.setTimeout(syncNow, 1200);
 }
 
+function setSyncPending(pending) {
+  syncPending = pending;
+  localStorage.setItem(pendingSyncKey, pending ? "1" : "0");
+}
+
+function retrySyncSoon() {
+  if (!syncPending) {
+    return;
+  }
+  window.clearTimeout(syncTimer);
+  syncTimer = window.setTimeout(syncNow, syncRetryDelay);
+  syncRetryDelay = Math.min(syncRetryDelay * 2, 60000);
+}
+
+async function resumeSync() {
+  if (syncPending) {
+    await syncNow();
+    return;
+  }
+  await pullQuietly();
+}
+
 async function syncNow() {
+  if (syncInProgress) {
+    return;
+  }
   const settings = getFirebaseSettings();
   if (!settings) {
     setStatus("Add sync code and Firebase config first.");
     return;
   }
+  syncInProgress = true;
   try {
     setStatus("Syncing...");
     const services = await getFirebaseServices(settings);
@@ -198,20 +248,30 @@ async function syncNow() {
     }
     await services.setDoc(ref, { bookData: getSyncPayload(), updatedAt: new Date().toISOString() });
     state.sync.lastSync = new Date().toLocaleString();
+    setSyncPending(false);
+    syncRetryDelay = 5000;
     persist();
     updateWidgetTitle();
     render();
     setStatus(`Synced ${state.sync.lastSync}`);
   } catch (error) {
+    setSyncPending(true);
     setStatus(`Sync failed: ${getFirebaseErrorMessage(error)}`);
+    retrySyncSoon();
+  } finally {
+    syncInProgress = false;
   }
 }
 
 async function pullQuietly() {
+  if (pullInProgress || syncInProgress) {
+    return;
+  }
   const settings = getFirebaseSettings(true);
   if (!settings) {
     return;
   }
+  pullInProgress = true;
   try {
     const services = await getFirebaseServices(settings);
     const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
@@ -223,6 +283,8 @@ async function pullQuietly() {
     }
   } catch {
     // Keep the widget quiet during background checks.
+  } finally {
+    pullInProgress = false;
   }
 }
 
@@ -283,6 +345,7 @@ function mergeRemote(payload) {
       ...state.foodSettings,
       ...remote.foodSettings,
       amounts: { ...state.foodSettings?.amounts, ...remote.foodSettings?.amounts },
+      secondAmounts: { ...state.foodSettings?.secondAmounts, ...remote.foodSettings?.secondAmounts },
     };
   }
   if (remoteHasSection("bookmarks")) state.bookmarks = { ...state.bookmarks, ...remote.bookmarks };
@@ -403,12 +466,20 @@ function migrateState(value) {
     profile: { name: value.profile?.name || "Leo", birthday: value.profile?.birthday || "2026-03-14", weightKg: Number(value.profile?.weightKg) || 5.1 },
     foodTimes: { morning: value.foodTimes?.morning || "07:30", afternoon: value.foodTimes?.afternoon || "", evening: value.foodTimes?.evening || "18:30" },
     foodSettings: {
+      ...value.foodSettings,
+      targetMode: value.foodSettings?.targetMode === "manual" || value.foodSettings?.autoTarget === false ? "manual" : "josera",
       type: value.foodSettings?.type || "Puppy food",
+      type2: value.foodSettings?.type2 || "",
       reminderMinutes: Number(value.foodSettings?.reminderMinutes ?? 5),
       amounts: {
         morning: value.foodSettings?.amounts?.morning || "110g",
         afternoon: value.foodSettings?.amounts?.afternoon || "",
         evening: value.foodSettings?.amounts?.evening || "120g",
+      },
+      secondAmounts: {
+        morning: value.foodSettings?.secondAmounts?.morning || "",
+        afternoon: value.foodSettings?.secondAmounts?.afternoon || "",
+        evening: value.foodSettings?.secondAmounts?.evening || "",
       },
     },
     sync: { code: value.sync?.code || "", firebaseConfig: value.sync?.firebaseConfig || "", lastSync: value.sync?.lastSync || "" },

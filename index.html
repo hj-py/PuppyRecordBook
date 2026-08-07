@@ -569,7 +569,18 @@
             </div>
             <div class="info-grid">
               <label>
-                Current food type
+                Daily target source
+                <select id="foodTargetMode">
+                  <option value="josera">Josera calculator</option>
+                  <option value="manual">Manual daily target</option>
+                </select>
+              </label>
+              <label>
+                Daily needed total
+                <input id="foodDailyTarget" type="number" min="0" max="1200" step="1" inputmode="numeric" placeholder="e.g. 240" />
+              </label>
+              <label>
+                Food 1
                 <input id="foodType" maxlength="80" list="joseraFoodOptions" placeholder="e.g. Josera YoungStar" />
                 <datalist id="joseraFoodOptions">
                   <option value="Josera YoungStar"></option>
@@ -580,28 +591,24 @@
                 </datalist>
               </label>
               <label>
+                Food 2 (optional)
+                <input id="foodType2" maxlength="80" placeholder="e.g. second dry food" />
+              </label>
+              <label>
                 Snack list
                 <textarea id="snackList" placeholder="Dental stick&#10;Training treat&#10;Carrot"></textarea>
               </label>
-              <label>
-                Daily needed
-                <input id="foodDailyTarget" type="number" min="0" max="1200" step="1" inputmode="numeric" placeholder="e.g. 240" />
-              </label>
-              <label>
+              <label class="josera-target-field">
                 Expected grown weight
                 <input id="foodExpectedWeight" type="number" min="5" max="90" step="1" inputmode="numeric" placeholder="e.g. 30" />
               </label>
-              <label>
+              <label class="josera-target-field">
                 Growth estimate
                 <input id="foodEstimatedWeight" readonly />
               </label>
-              <label class="checkbox-label">
+              <label class="checkbox-label josera-target-field">
                 <input id="foodUseEstimatedWeight" type="checkbox" />
                 <span>Use growth estimate for Josera target</span>
-              </label>
-              <label class="checkbox-label">
-                <input id="foodAutoTarget" type="checkbox" />
-                <span>Update weekly from Josera calculator</span>
               </label>
               <label>
                 Remind before food
@@ -612,24 +619,36 @@
                 <input id="foodTimeMorning" type="time" />
               </label>
               <label>
-                Morning amount
+                Morning - Food 1
                 <input id="foodAmountMorning" maxlength="40" placeholder="e.g. 120g" />
+              </label>
+              <label>
+                Morning - Food 2
+                <input id="foodAmountMorning2" maxlength="40" placeholder="optional" />
               </label>
               <label>
                 Afternoon
                 <input id="foodTimeAfternoon" type="time" />
               </label>
               <label>
-                Afternoon amount
+                Afternoon - Food 1
                 <input id="foodAmountAfternoon" maxlength="40" placeholder="optional" />
+              </label>
+              <label>
+                Afternoon - Food 2
+                <input id="foodAmountAfternoon2" maxlength="40" placeholder="optional" />
               </label>
               <label>
                 Evening
                 <input id="foodTimeEvening" type="time" />
               </label>
               <label>
-                Evening amount
+                Evening - Food 1
                 <input id="foodAmountEvening" maxlength="40" placeholder="e.g. 140g" />
+              </label>
+              <label>
+                Evening - Food 2
+                <input id="foodAmountEvening2" maxlength="40" placeholder="optional" />
               </label>
             </div>
             <p id="foodRecommendationStatus" class="legal-note"></p>
