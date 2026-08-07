@@ -71,6 +71,16 @@
               <h2>Quick Log</h2>
               <span id="activeSessionCount">0</span>
             </div>
+            <div id="feedingPlanNotice" class="feeding-plan-notice" hidden>
+              <div class="feeding-plan-heading">
+                <strong>Feeding plan</strong>
+                <label class="compact-toggle">
+                  <input id="feedingPlanToggle" type="checkbox" role="switch" checked />
+                  <span>Show</span>
+                </label>
+              </div>
+              <p id="feedingPlanNoticeText"></p>
+            </div>
             <div class="quick-log-grid">
               <button type="button" class="quick-log-button" data-action="pee">Pee</button>
               <button type="button" class="quick-log-button" data-action="poop">Poop</button>
@@ -593,6 +603,10 @@
               <label>
                 Food 2 (optional)
                 <input id="foodType2" maxlength="80" placeholder="e.g. second dry food" />
+              </label>
+              <label>
+                Feeding plan notice
+                <textarea id="foodPlanNotice" maxlength="500" placeholder="e.g. Morning: 50g Food 1 + 30g Food 2"></textarea>
               </label>
               <label>
                 Snack list

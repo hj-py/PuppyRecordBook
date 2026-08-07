@@ -1,4 +1,5 @@
 const storageKey = "puppy-record-book-state";
+const feedingPlanVisibilityKey = "puppy-record-book-feeding-plan-visible";
 const timedTypes = ["walk", "play", "sleep", "train", "box"];
 const typeConfig = {
   pee: { label: "Pee", icon: "P", color: "#7fa6b8" },
@@ -19,11 +20,15 @@ let pullInProgress = false;
 let syncRetryDelay = 5000;
 const pendingSyncKey = "puppy-record-book-widget-sync-pending";
 let syncPending = localStorage.getItem(pendingSyncKey) === "1";
+let feedingPlanVisible = localStorage.getItem(feedingPlanVisibilityKey) !== "0";
 const state = loadState();
 const elements = {
   widgetTitle: document.querySelector("#widgetTitle"),
   statusText: document.querySelector("#statusText"),
   todaySummary: document.querySelector("#todaySummary"),
+  feedingPlanCard: document.querySelector("#feedingPlanCard"),
+  feedingPlanText: document.querySelector("#feedingPlanText"),
+  feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
   recordCount: document.querySelector("#recordCount"),
   recordList: document.querySelector("#recordList"),
   syncNow: document.querySelector("#syncNow"),
@@ -41,6 +46,11 @@ function init() {
     button.addEventListener("click", () => handleQuickAction(button.dataset.action));
   });
   elements.syncNow.addEventListener("click", syncNow);
+  elements.feedingPlanToggle.addEventListener("change", () => {
+    feedingPlanVisible = elements.feedingPlanToggle.checked;
+    localStorage.setItem(feedingPlanVisibilityKey, feedingPlanVisible ? "1" : "0");
+    render();
+  });
   [elements.syncCode, elements.firebaseConfig].forEach((input) => input.addEventListener("input", saveSyncSettings));
   window.setInterval(render, 1000);
   window.addEventListener("focus", resumeSync);
@@ -161,6 +171,12 @@ function render() {
   });
   elements.recordCount.textContent = records.length;
   elements.todaySummary.textContent = buildTodaySummary(records, active);
+  const feedingPlan = getFeedingPlanText();
+  elements.feedingPlanCard.hidden = !feedingPlan;
+  elements.feedingPlanText.textContent = feedingPlan;
+  elements.feedingPlanText.hidden = !feedingPlanVisible;
+  elements.feedingPlanToggle.checked = feedingPlanVisible;
+  elements.feedingPlanToggle.setAttribute("aria-expanded", String(feedingPlanVisible));
   elements.recordList.innerHTML = records.length
     ? records
         .slice(0, 10)
@@ -181,6 +197,29 @@ function render() {
         })
         .join("")
     : `<article class="record-item"><span class="record-icon">+</span><span><strong>No records yet</strong><small>Tap a quick button.</small></span></article>`;
+}
+
+function getFeedingPlanText() {
+  const customNotice = String(state.foodSettings?.planNotice || "").trim();
+  if (customNotice) {
+    return customNotice;
+  }
+  const food1 = state.foodSettings?.type || "Food 1";
+  const food2 = state.foodSettings?.type2 || "Food 2";
+  const amounts = state.foodSettings?.amounts || {};
+  const secondAmounts = state.foodSettings?.secondAmounts || {};
+  const times = state.foodTimes || {};
+  return [
+    ["Morning", times.morning, amounts.morning, secondAmounts.morning],
+    ["Afternoon", times.afternoon, amounts.afternoon, secondAmounts.afternoon],
+    ["Evening", times.evening, amounts.evening, secondAmounts.evening],
+  ]
+    .map(([label, time, amount1, amount2]) => {
+      const components = [amount1 ? `${amount1} ${food1}` : "", amount2 ? `${amount2} ${food2}` : ""].filter(Boolean);
+      return components.length ? `${label}${time ? ` (${formatTime(time)})` : ""}: ${components.join(" + ")}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildTodaySummary(records, active) {
@@ -328,13 +367,14 @@ function mergeRemote(payload) {
   const localSync = state.sync;
   const localRecords = state.records || {};
   const remoteRecords = remote.records || {};
-  state.records = mergeRecords(localRecords, remoteRecords, state.deletedRecordIds || []);
+  const deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), ...(remote.deletedRecordIds || [])]));
+  state.records = mergeRecords(localRecords, remoteRecords, deletedRecordIds);
   state.activeSessions = mergeActiveSessions(state.activeSessions || {}, remote.activeSessions || {}, [
     ...(state.stoppedSessionIds || []),
     ...(remote.stoppedSessionIds || []),
   ]);
   state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), ...(remote.stoppedSessionIds || [])]));
-  state.deletedRecordIds = Array.from(new Set(state.deletedRecordIds || []));
+  state.deletedRecordIds = deletedRecordIds;
   if (remoteHasSection("profile")) state.profile = { ...state.profile, ...remote.profile };
   if (remoteHasSection("owner")) state.owner = { ...state.owner, ...remote.owner };
   if (remoteHasSection("school")) state.school = { ...state.school, ...remote.school };
@@ -470,6 +510,7 @@ function migrateState(value) {
       targetMode: value.foodSettings?.targetMode === "manual" || value.foodSettings?.autoTarget === false ? "manual" : "josera",
       type: value.foodSettings?.type || "Puppy food",
       type2: value.foodSettings?.type2 || "",
+      planNotice: value.foodSettings?.planNotice || "",
       reminderMinutes: Number(value.foodSettings?.reminderMinutes ?? 5),
       amounts: {
         morning: value.foodSettings?.amounts?.morning || "110g",

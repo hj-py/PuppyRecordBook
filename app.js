@@ -1,6 +1,7 @@
 const storageKey = "puppy-record-book-state";
 const backupStorageKey = "puppy-record-book-state-backups";
 const pendingSyncStorageKey = "puppy-record-book-firebase-pending";
+const feedingPlanVisibilityKey = "puppy-record-book-feeding-plan-visible";
 
 const typeConfig = {
   walk: { label: "Walk", icon: "W", color: "#617861", amount: "Minutes", placeholder: "e.g. 30 min" },
@@ -110,6 +111,7 @@ let activeCalendarType = "walk";
 let calendarEditingRecordId = null;
 let homeBookmarkMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedBookmarkYear = today.getFullYear();
+let feedingPlanVisible = localStorage.getItem(feedingPlanVisibilityKey) !== "0";
 
 const elements = {
   pullRefreshIndicator: document.querySelector("#pullRefreshIndicator"),
@@ -216,6 +218,9 @@ const elements = {
   activeSessionCount: document.querySelector("#activeSessionCount"),
   activeSessionTimers: document.querySelector("#activeSessionTimers"),
   quickLogStatus: document.querySelector("#quickLogStatus"),
+  feedingPlanNotice: document.querySelector("#feedingPlanNotice"),
+  feedingPlanNoticeText: document.querySelector("#feedingPlanNoticeText"),
+  feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
   heroPhoto: document.querySelector("#heroPhoto"),
   photoInput: document.querySelector("#photoInput"),
   ownerName: document.querySelector("#ownerName"),
@@ -242,6 +247,7 @@ const elements = {
   foodTargetMode: document.querySelector("#foodTargetMode"),
   foodType: document.querySelector("#foodType"),
   foodType2: document.querySelector("#foodType2"),
+  foodPlanNotice: document.querySelector("#foodPlanNotice"),
   snackList: document.querySelector("#snackList"),
   foodDailyTarget: document.querySelector("#foodDailyTarget"),
   foodExpectedWeight: document.querySelector("#foodExpectedWeight"),
@@ -297,6 +303,12 @@ function init() {
 }
 
 function bindEvents() {
+  elements.feedingPlanToggle.addEventListener("change", () => {
+    feedingPlanVisible = elements.feedingPlanToggle.checked;
+    localStorage.setItem(feedingPlanVisibilityKey, feedingPlanVisible ? "1" : "0");
+    renderFeedingPlanNotice();
+  });
+
   elements.profileButton.addEventListener("click", () => {
     showProfileView();
   });
@@ -615,6 +627,7 @@ function renderMain() {
   renderAge();
   renderInsight();
   renderQuickLogButtons();
+  renderFeedingPlanNotice();
   renderCategory();
   renderHomeMonthlyAverage();
   renderHomeBookmarkSummary();
@@ -1520,6 +1533,38 @@ function renderQuickLogButtons() {
       `
     )
     .join("");
+}
+
+function renderFeedingPlanNotice() {
+  const notice = getFeedingPlanText();
+  elements.feedingPlanNotice.hidden = !notice;
+  elements.feedingPlanNoticeText.textContent = notice;
+  elements.feedingPlanNoticeText.hidden = !feedingPlanVisible;
+  elements.feedingPlanToggle.checked = feedingPlanVisible;
+  elements.feedingPlanToggle.setAttribute("aria-expanded", String(feedingPlanVisible));
+}
+
+function getFeedingPlanText() {
+  const customNotice = String(state.foodSettings?.planNotice || "").trim();
+  if (customNotice) {
+    return customNotice;
+  }
+  const food1 = state.foodSettings?.type || "Food 1";
+  const food2 = state.foodSettings?.type2 || "Food 2";
+  return [
+    ["Morning", state.foodTimes?.morning, state.foodSettings?.amounts?.morning, state.foodSettings?.secondAmounts?.morning],
+    ["Afternoon", state.foodTimes?.afternoon, state.foodSettings?.amounts?.afternoon, state.foodSettings?.secondAmounts?.afternoon],
+    ["Evening", state.foodTimes?.evening, state.foodSettings?.amounts?.evening, state.foodSettings?.secondAmounts?.evening],
+  ]
+    .map(([label, time, amount1, amount2]) => {
+      const components = [
+        amount1 ? `${amount1} ${food1}` : "",
+        amount2 ? `${amount2} ${food2}` : "",
+      ].filter(Boolean);
+      return components.length ? `${label}${time ? ` (${formatTime(time)})` : ""}: ${components.join(" + ")}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 function handleQuickLog(type) {
@@ -2786,6 +2831,7 @@ function hydrateProfileForm() {
   elements.foodTargetMode.value = getFoodTargetMode();
   elements.foodType.value = state.foodSettings.type;
   elements.foodType2.value = state.foodSettings.type2;
+  elements.foodPlanNotice.value = state.foodSettings.planNotice;
   if (document.activeElement !== elements.snackList) {
     elements.snackList.value = getSnackOptions().join("\n");
   }
@@ -2844,6 +2890,7 @@ function syncProfileFromForm() {
   state.foodSettings.autoTarget = state.foodSettings.targetMode === "josera";
   state.foodSettings.type = elements.foodType.value.trim();
   state.foodSettings.type2 = elements.foodType2.value.trim();
+  state.foodSettings.planNotice = elements.foodPlanNotice.value.trim();
   const nextSnacks = normalizeSnackList(elements.snackList.value);
   if (JSON.stringify(nextSnacks) !== JSON.stringify(normalizeSnackList(state.foodSettings.snacks))) {
     state.foodSettings.snacksUpdatedAt = new Date().toISOString();
@@ -2878,6 +2925,7 @@ function saveProfileFormChanges() {
   renderAge();
   renderInsight();
   renderReminderSections();
+  renderFeedingPlanNotice();
   updateFoodTargetModeUI();
 }
 
@@ -2914,6 +2962,7 @@ function getProfileInputs() {
     elements.foodTargetMode,
     elements.foodType,
     elements.foodType2,
+    elements.foodPlanNotice,
     elements.snackList,
     elements.foodDailyTarget,
     elements.foodExpectedWeight,
@@ -4073,7 +4122,9 @@ function mergeStates(local, remote, options = {}) {
   const chooseDefaultSection = (sectionName, localSection, remoteSection) =>
     preferRemoteDefaults && remoteHasSection(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
-  const deletedRecordIds = options.preserveRemoteRecords ? [] : Array.from(new Set(local.deletedRecordIds || []));
+  const deletedRecordIds = options.preserveRemoteRecords
+    ? Array.from(new Set(remote.deletedRecordIds || []))
+    : Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
   merged.owner = chooseDefaultSection("owner", local.owner, remote.owner);
   merged.profile = chooseDefaultSection("profile", local.profile, remote.profile);
@@ -4703,6 +4754,7 @@ function loadState() {
       targetMode: "josera",
       type: "Josera YoungStar dry food",
       type2: "",
+      planNotice: "",
       snacks: defaultSnackList,
       snacksUpdatedAt: "",
       reminderMinutes: 5,
@@ -4798,6 +4850,7 @@ function migrateState(value) {
       targetMode: value.foodSettings?.targetMode === "manual" || value.foodSettings?.autoTarget === false ? "manual" : "josera",
       type: value.foodSettings?.type || "",
       type2: value.foodSettings?.type2 || "",
+      planNotice: value.foodSettings?.planNotice || "",
       snacks: migratedSnacks,
       snacksUpdatedAt: value.foodSettings?.snacksUpdatedAt || "",
       reminderMinutes: Number.isFinite(Number(value.foodSettings?.reminderMinutes)) ? Number(value.foodSettings.reminderMinutes) : 5,

@@ -1,2 +1,2 @@
 @echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0start-windows-widget.ps1" small
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0NativeWidget\launch-native-widget.ps1"
