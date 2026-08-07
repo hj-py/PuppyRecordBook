@@ -486,27 +486,8 @@ function bindEvents() {
     recordMainWeightChange();
   });
 
-  let profileSaveTimer = null;
-  const handleProfileInput = () => {
-    if (profileSaveTimer) {
-      clearTimeout(profileSaveTimer);
-      profileSaveTimer = null;
-    }
-    syncProfileFromForm();
-    persist();
-    hydrateMainProfile();
-    renderAge();
-    renderInsight();
-    renderReminderSections();
-    updateFoodTargetModeUI();
-  };
-  const scheduleProfileInput = () => {
-    clearTimeout(profileSaveTimer);
-    profileSaveTimer = setTimeout(handleProfileInput, 450);
-  };
   getProfileInputs().forEach((input) => {
-    input.addEventListener("input", scheduleProfileInput);
-    input.addEventListener("change", handleProfileInput);
+    input.addEventListener("change", saveProfileFormChanges);
   });
 
   elements.enableVaccineAlarm.addEventListener("click", () => {
@@ -560,6 +541,9 @@ function bindEvents() {
 }
 
 function navigateToView(view) {
+  if (currentView === "profile" && view !== "profile") {
+    saveProfileFormChanges();
+  }
   if (view === "status") {
     showStatusView();
     return;
@@ -2887,6 +2871,16 @@ function syncProfileFromForm() {
   markSectionUpdatedAt(state.foodSettings, before.foodSettings, updatedAt);
 }
 
+function saveProfileFormChanges() {
+  syncProfileFromForm();
+  persist();
+  hydrateMainProfile();
+  renderAge();
+  renderInsight();
+  renderReminderSections();
+  updateFoodTargetModeUI();
+}
+
 function getComparableSection(section = {}) {
   const clone = makeJsonSafe(section || {});
   delete clone.updatedAt;
@@ -3984,6 +3978,9 @@ function hasFirebaseSettings() {
 function startFirebaseSyncLifecycle() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      if (currentView === "profile") {
+        saveProfileFormChanges();
+      }
       appWasHidden = true;
     } else if (appWasHidden) {
       appWasHidden = false;
