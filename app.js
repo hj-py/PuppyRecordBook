@@ -744,6 +744,7 @@ function renderCalendarView() {
   getCalendarDates().forEach((day) => {
     const key = toKey(day);
     const records = state.records[key] || [];
+    const hasShower = records.some((record) => record.type === "shower");
     const button = document.createElement("button");
     button.type = "button";
     button.className = "day-cell";
@@ -754,7 +755,10 @@ function renderCalendarView() {
     button.innerHTML = `
       <span class="day-number">${day.getDate()}</span>
       ${isDateBookmarked(key) ? '<span class="day-star" aria-label="Bookmarked day">★</span>' : ""}
-      <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
+      <span class="day-indicators">
+        ${hasShower ? '<span class="shower-marker" aria-label="Shower recorded">🚿</span>' : ""}
+        <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
+      </span>
     `;
     button.addEventListener("click", () => {
       selectedDate = key;
