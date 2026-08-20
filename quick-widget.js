@@ -184,7 +184,7 @@ function render() {
           const config = typeConfig[record.type] || { label: record.type, icon: "?", color: "#6e6a5f" };
           const meta = timedTypes.includes(record.type)
             ? `${formatDuration(getRecordDuration(record))} - ${formatTime(record.startTime || record.time)} - ${formatTime(record.endTime)}`
-            : [record.amount, record.note].filter(Boolean).join(" - ");
+            : [record.type === "poop" && record.abnormalPoop ? "⚠️ Abnormal poop" : "", record.amount, record.note].filter(Boolean).join(" - ");
           return `
             <article class="record-item">
               <span class="record-icon" style="background:${config.color}">${config.icon}</span>

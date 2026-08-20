@@ -161,6 +161,8 @@ const elements = {
   calendarVetReminderPreview: document.querySelector("#calendarVetReminderPreview"),
   calendarAccidentField: document.querySelector("#calendarAccidentField"),
   calendarRecordAccident: document.querySelector("#calendarRecordAccident"),
+  calendarAbnormalPoopField: document.querySelector("#calendarAbnormalPoopField"),
+  calendarRecordAbnormalPoop: document.querySelector("#calendarRecordAbnormalPoop"),
   calendarEditorNote: document.querySelector("#calendarEditorNote"),
   calendarAmountField: document.querySelector("#calendarAmountField"),
   calendarCancelEdit: document.querySelector("#calendarCancelEdit"),
@@ -198,6 +200,8 @@ const elements = {
   vetReminderPreview: document.querySelector("#vetReminderPreview"),
   accidentField: document.querySelector("#accidentField"),
   recordAccident: document.querySelector("#recordAccident"),
+  abnormalPoopField: document.querySelector("#abnormalPoopField"),
+  recordAbnormalPoop: document.querySelector("#recordAbnormalPoop"),
   recordNote: document.querySelector("#recordNote"),
   amountField: document.querySelector("#amountField"),
   saveRecord: document.querySelector("#saveRecord"),
@@ -745,6 +749,7 @@ function renderCalendarView() {
     const key = toKey(day);
     const records = state.records[key] || [];
     const hasShower = records.some((record) => record.type === "shower");
+    const hasAbnormalPoop = records.some(isAbnormalPoopRecord);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "day-cell";
@@ -756,7 +761,8 @@ function renderCalendarView() {
       <span class="day-number">${day.getDate()}</span>
       ${isDateBookmarked(key) ? '<span class="day-star" aria-label="Bookmarked day">★</span>' : ""}
       <span class="day-indicators">
-        ${hasShower ? '<span class="shower-marker" aria-label="Shower recorded">🚿</span>' : ""}
+        ${hasShower ? '<span class="calendar-status-marker" aria-label="Shower recorded">🚿</span>' : ""}
+        ${hasAbnormalPoop ? '<span class="calendar-status-marker" aria-label="Abnormal poop recorded">⚠️</span>' : ""}
         <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
       </span>
     `;
@@ -823,6 +829,7 @@ function updateCalendarAmountField() {
   updateCalendarVetReminderPreview();
   syncCalendarFoodKindFields();
   syncCalendarAccidentFieldVisibility();
+  syncCalendarAbnormalPoopFieldVisibility();
   syncCalendarDurationVisibility();
 }
 
@@ -831,6 +838,14 @@ function syncCalendarAccidentFieldVisibility() {
   elements.calendarAccidentField.hidden = !show;
   if (!show) {
     elements.calendarRecordAccident.checked = false;
+  }
+}
+
+function syncCalendarAbnormalPoopFieldVisibility() {
+  const show = activeCalendarType === "poop";
+  elements.calendarAbnormalPoopField.hidden = !show;
+  if (!show) {
+    elements.calendarRecordAbnormalPoop.checked = false;
   }
 }
 
@@ -902,9 +917,8 @@ function buildCalendarRecordFromForm(id) {
       record.note = "";
     }
   }
-  if (["pee", "poop"].includes(activeCalendarType)) {
-    record.accident = elements.calendarRecordAccident.checked;
-  }
+  record.accident = ["pee", "poop"].includes(activeCalendarType) && elements.calendarRecordAccident.checked;
+  record.abnormalPoop = activeCalendarType === "poop" && elements.calendarRecordAbnormalPoop.checked;
 
   if (timedRecordTypes.includes(activeCalendarType)) {
     const startTime = elements.calendarEditorStartTime.value || record.time;
@@ -936,6 +950,7 @@ function startCalendarEditRecord(record) {
   elements.calendarVetKind.value = getVetKind(record);
   elements.calendarVetReminderMinutes.value = String(getVetReminderMinutes(record));
   elements.calendarRecordAccident.checked = Boolean(record.accident);
+  elements.calendarRecordAbnormalPoop.checked = Boolean(record.abnormalPoop);
   elements.calendarEditorNote.value = record.note || "";
   document.querySelectorAll(".calendar-type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeCalendarType);
@@ -955,10 +970,12 @@ function updateCalendarEditedRecord() {
     return;
   }
 
-  Object.assign(record, buildCalendarRecordFromForm(record.id));
-  applyWeightRecordToProfile(record);
+  const replacement = buildCalendarRecordFromForm(createId());
+  state.records[selectedDate] = records.map((entry) => (entry.id === record.id ? replacement : entry));
+  state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), record.id]));
+  applyWeightRecordToProfile(replacement);
   syncProfileWeightFromRecords();
-  if (record.type === "vaccine") {
+  if (replacement.type === "vaccine") {
     maybeRequestNotificationPermission({ allowPrompt: true });
   }
   persist();
@@ -974,6 +991,7 @@ function clearCalendarFormAfterSave() {
   elements.calendarVetKind.value = "Visit";
   elements.calendarVetReminderMinutes.value = "60";
   elements.calendarRecordAccident.checked = false;
+  elements.calendarRecordAbnormalPoop.checked = false;
   elements.calendarEditorNote.value = "";
   syncCalendarFoodKindFields();
   resetCalendarEditorTimeToNow();
@@ -1357,7 +1375,7 @@ function getRecordListMeta(record, dateKey = "") {
     return [getFoodKindLabel(record), record.amount, detail].filter(Boolean).join(" - ");
   }
   if (["pee", "poop"].includes(record.type)) {
-    return [record.accident ? "Accident" : "", record.amount, record.note].filter(Boolean).join(" - ");
+    return [isAbnormalPoopRecord(record) ? "⚠️ Abnormal poop" : "", record.accident ? "Accident" : "", record.amount, record.note].filter(Boolean).join(" - ");
   }
   return [record.amount, record.note].filter(Boolean).join(" - ");
 }
@@ -1975,9 +1993,8 @@ function buildRecordFromForm(id) {
       record.note = "";
     }
   }
-  if (["pee", "poop"].includes(activeType)) {
-    record.accident = elements.recordAccident.checked;
-  }
+  record.accident = ["pee", "poop"].includes(activeType) && elements.recordAccident.checked;
+  record.abnormalPoop = activeType === "poop" && elements.recordAbnormalPoop.checked;
   if (timedRecordTypes.includes(activeType)) {
     const startTime = elements.recordStartTime.value || record.time;
     const durationMinutes = Math.max(1, durationFromTimes(startTime, elements.recordEndTime.value) || Number(elements.recordDuration.value) || parseDurationMinutes(record.amount) || 1);
@@ -2000,6 +2017,7 @@ function clearFormAfterSave() {
   elements.vetKind.value = "Visit";
   elements.vetReminderMinutes.value = "60";
   elements.recordAccident.checked = false;
+  elements.recordAbnormalPoop.checked = false;
   elements.recordNote.value = "";
   syncFoodKindFields();
   resetRecordTimeToNow();
@@ -2018,6 +2036,7 @@ function startEditRecord(record) {
   elements.vetKind.value = getVetKind(record);
   elements.vetReminderMinutes.value = String(getVetReminderMinutes(record));
   elements.recordAccident.checked = Boolean(record.accident);
+  elements.recordAbnormalPoop.checked = Boolean(record.abnormalPoop);
   elements.recordNote.value = record.note || "";
   document.querySelectorAll(".type-button").forEach((button) => {
     button.classList.toggle("selected", button.dataset.type === activeType);
@@ -2037,15 +2056,17 @@ function updateEditedRecord() {
     return;
   }
 
-  Object.assign(record, buildRecordFromForm(record.id));
-  if (record.type === "weight") {
-    const parsedWeight = parseWeight(record.amount);
+  const replacement = buildRecordFromForm(createId());
+  state.records[selectedDate] = records.map((entry) => (entry.id === record.id ? replacement : entry));
+  state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), record.id]));
+  if (replacement.type === "weight") {
+    const parsedWeight = parseWeight(replacement.amount);
     if (Number.isFinite(parsedWeight)) {
       state.profile.weightKg = parsedWeight;
     }
   }
   syncProfileWeightFromRecords();
-  if (record.type === "vaccine") {
+  if (replacement.type === "vaccine") {
     maybeRequestNotificationPermission({ allowPrompt: true });
   }
   persist();
@@ -2059,6 +2080,7 @@ function clearEditMode() {
   elements.foodKind.value = "food";
   populateSnackSelect(elements.snackName);
   elements.recordAccident.checked = false;
+  elements.recordAbnormalPoop.checked = false;
   elements.recordNote.value = "";
   syncFoodKindFields();
   resetRecordTimeToNow();
@@ -2147,7 +2169,7 @@ function getCategoryDetail(entry, activeCategoryType = "") {
   const typeLabel = typeConfig[entry.type]?.label || entry.type;
   if (activeCategoryType === "potty" || activeCategoryType === "accident") {
     return {
-      primary: [entry.amount || formatTime(entry.time), typeLabel, entry.accident ? "Accident" : ""].filter(Boolean).join(" - "),
+      primary: [entry.amount || formatTime(entry.time), typeLabel, isAbnormalPoopRecord(entry) ? "⚠️ Abnormal" : "", entry.accident ? "Accident" : ""].filter(Boolean).join(" - "),
       secondary: entry.note,
     };
   }
@@ -2333,6 +2355,10 @@ function calculateStatsForRange(startKey, endKey) {
 
 function isAccidentRecord(record) {
   return ["pee", "poop"].includes(record?.type) && Boolean(record.accident);
+}
+
+function isAbnormalPoopRecord(record) {
+  return record?.type === "poop" && Boolean(record.abnormalPoop);
 }
 
 function getAccidentRecordsUntil(endKey = toKey(today)) {
@@ -3416,7 +3442,7 @@ function applySyncedPayload(payload, options = {}) {
 }
 
 function exportExcelData() {
-  const rows = [["Date", "Type", "Food kind", "Snack", "Time", "Start", "End", "Duration minutes", "Amount", "Food 1", "Food 1 amount", "Food 2", "Food 2 amount", "Accident", "Note"]];
+  const rows = [["Date", "Type", "Food kind", "Snack", "Time", "Start", "End", "Duration minutes", "Amount", "Food 1", "Food 1 amount", "Food 2", "Food 2 amount", "Accident", "Abnormal poop", "Note"]];
   Object.entries(state.records)
     .sort(([a], [b]) => a.localeCompare(b))
     .forEach(([date, records]) => {
@@ -3440,6 +3466,7 @@ function exportExcelData() {
             foodComponents[1]?.name || "",
             foodComponents[1]?.amount || "",
             record.accident ? "yes" : "",
+            isAbnormalPoopRecord(record) ? "yes" : "",
             record.note || "",
           ]);
         });
@@ -3504,7 +3531,7 @@ function importExcelRows(rows) {
     throw new Error("no record rows found.");
   }
   const headers = rows[0].map((header) => header.trim().toLowerCase());
-  const columns = ["date", "type", "food kind", "snack", "snack counts as food", "time", "start", "end", "duration minutes", "amount", "food 1", "food 1 amount", "food 2", "food 2 amount", "accident", "note"];
+  const columns = ["date", "type", "food kind", "snack", "snack counts as food", "time", "start", "end", "duration minutes", "amount", "food 1", "food 1 amount", "food 2", "food 2 amount", "accident", "abnormal poop", "note"];
   const indexes = Object.fromEntries(columns.map((header) => [header, headers.indexOf(header)]));
   if (["date", "type", "time"].some((header) => indexes[header] < 0)) {
     throw new Error("CSV must use the exported columns.");
@@ -3546,6 +3573,9 @@ function importExcelRows(rows) {
     }
     if (["pee", "poop"].includes(type) && indexes.accident >= 0) {
       record.accident = normalizeImportBoolean(row[indexes.accident]);
+    }
+    if (type === "poop" && indexes["abnormal poop"] >= 0) {
+      record.abnormalPoop = normalizeImportBoolean(row[indexes["abnormal poop"]]);
     }
     if (timedRecordTypes.includes(type)) {
       record.startTime = startTime || record.time;
@@ -3668,6 +3698,7 @@ function isDuplicateImportedRecord(date, record) {
       entry.time === record.time &&
       (entry.amount || "") === (record.amount || "") &&
       Boolean(entry.accident) === Boolean(record.accident) &&
+      Boolean(entry.abnormalPoop) === Boolean(record.abnormalPoop) &&
       (entry.snackName || "") === (record.snackName || "") &&
       (entry.note || "") === (record.note || "")
   );
@@ -3995,6 +4026,7 @@ function getRecordSignatures(records) {
         record.snackName || "",
         JSON.stringify(getFoodComponents(record)),
         record.accident ? "1" : "0",
+        record.abnormalPoop ? "1" : "0",
       ].join("|")
     )
   );
@@ -4639,6 +4671,7 @@ function updateAmountField() {
   updateVetReminderPreview();
   syncFoodKindFields();
   syncAccidentFieldVisibility();
+  syncAbnormalPoopFieldVisibility();
   syncDurationVisibility();
   if (timedRecordTypes.includes(activeType)) {
     elements.recordStartTime.value = elements.recordStartTime.value || elements.recordTime.value || new Date().toTimeString().slice(0, 5);
@@ -4650,6 +4683,14 @@ function syncAccidentFieldVisibility() {
   elements.accidentField.hidden = !show;
   if (!show) {
     elements.recordAccident.checked = false;
+  }
+}
+
+function syncAbnormalPoopFieldVisibility() {
+  const show = activeType === "poop";
+  elements.abnormalPoopField.hidden = !show;
+  if (!show) {
+    elements.recordAbnormalPoop.checked = false;
   }
 }
 
