@@ -2,6 +2,8 @@ const storageKey = "puppy-record-book-state";
 const backupStorageKey = "puppy-record-book-state-backups";
 const pendingSyncStorageKey = "puppy-record-book-firebase-pending";
 const feedingPlanVisibilityKey = "puppy-record-book-feeding-plan-visible";
+const localBackupIntervalMs = 5 * 60 * 1000;
+const maxLocalBackups = 3;
 
 const typeConfig = {
   walk: { label: "Walk", icon: "W", color: "#617861", amount: "Minutes", placeholder: "e.g. 30 min" },
@@ -21,8 +23,8 @@ const typeConfig = {
   note: { label: "Note", icon: "N", color: "#6e6a5f", amount: "Topic", placeholder: "e.g. mood, symptom, visitor" },
 };
 
-const categoryTypes = ["walk", "food", "water", "weight", "sleep", "box", "note"];
-const timedQuickTypes = ["walk", "play", "sleep", "train", "box"];
+const categoryTypes = ["walk", "food", "water", "weight", "sleep", "note"];
+const timedQuickTypes = ["walk", "play", "sleep", "train"];
 const timedRecordTypes = ["walk", "play", "sleep", "train", "box"];
 const analyticsStartKey = "2026-05-09";
 const notePlaceholder = "Park, chicken kibble, rabies vaccine...";
@@ -101,6 +103,7 @@ let activeTimerInterval = null;
 let autoSyncInProgress = false;
 let autoSyncQueued = false;
 let localChangeRevision = hasStoredPendingFirebasePush() ? 1 : 0;
+let lastRecoveryBackupAt = 0;
 let resumeSyncInProgress = false;
 let lastResumeSyncAt = 0;
 let appWasHidden = document.hidden;
@@ -750,6 +753,9 @@ function renderCalendarView() {
     const records = state.records[key] || [];
     const hasShower = records.some((record) => record.type === "shower");
     const hasAbnormalPoop = records.some(isAbnormalPoopRecord);
+    const hasToothBrushing = records.some((record) => record.type === "tooth");
+    const statusMarkerCount = [hasShower, hasAbnormalPoop, hasToothBrushing].filter(Boolean).length;
+    const visibleRecordDots = records.slice(0, statusMarkerCount ? Math.max(0, 3 - statusMarkerCount) : 3);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "day-cell";
@@ -763,7 +769,8 @@ function renderCalendarView() {
       <span class="day-indicators">
         ${hasShower ? '<span class="calendar-status-marker" aria-label="Shower recorded">🚿</span>' : ""}
         ${hasAbnormalPoop ? '<span class="calendar-status-marker" aria-label="Abnormal poop recorded">⚠️</span>' : ""}
-        <span class="dot-row">${records.slice(0, 3).map(() => '<span class="dot"></span>').join("")}</span>
+        ${hasToothBrushing ? '<span class="calendar-status-marker" aria-label="Tooth brushing recorded">🪥</span>' : ""}
+        <span class="dot-row">${visibleRecordDots.map(() => '<span class="dot"></span>').join("")}</span>
       </span>
     `;
     button.addEventListener("click", () => {
@@ -1025,7 +1032,6 @@ function renderSelectedDayTotalSummary(dateKey) {
   const playMinutes = durationFor("play");
   const walkMinutes = durationFor("walk");
   const trainMinutes = durationFor("train");
-  const boxMinutes = durationFor("box");
   const peeCount = countFor("pee");
   const poopCount = countFor("poop");
   const foodProgress = formatFoodProgress(records, dateKey);
@@ -1039,7 +1045,6 @@ function renderSelectedDayTotalSummary(dateKey) {
     ["Play", durationOrBlank(playMinutes)],
     ["Walk", durationOrBlank(walkMinutes)],
     ["Train", durationOrBlank(trainMinutes)],
-    ["Box", durationOrBlank(boxMinutes)],
     ["Pee", peeCount ? `${peeCount} times (avg. interval: ${formatAverageInterval(records, "pee")})` : ""],
     ["Poop", poopCount ? `${poopCount} times (avg. interval: ${formatAverageInterval(records, "poop")})` : ""],
     ["Food", valueOrBlank(foodProgress)],
@@ -1321,7 +1326,6 @@ function renderHomeMonthlyAverage() {
     <article><span>Poop Interval</span><strong>${escapeHtml(stats.poopInterval)}</strong></article>
     <article><span>Sleep</span><strong>${escapeHtml(stats.sleepPerDay)}/day</strong></article>
     <article><span>Walk</span><strong>${escapeHtml(stats.walkPerDay)}/day</strong></article>
-    <article><span>Box</span><strong>${escapeHtml(stats.boxPerDay)}/day</strong></article>
     <article><span>Weight</span><strong>${escapeHtml(stats.weightText)}</strong></article>
   `;
 }
@@ -2278,7 +2282,6 @@ function renderMonthStats(endDate, stats) {
       <p>Accident ${stats.accidentText}</p>
       <p>Pee interval ${stats.peeInterval} - Poop interval ${stats.poopInterval}</p>
       <p>Sleep ${stats.sleepPerDay}/day - Walk ${stats.walkPerDay}/day</p>
-      <p>Box ${stats.boxPerDay}/day</p>
       <p>${stats.weightText}</p>
     </article>
   `;
@@ -2304,7 +2307,6 @@ function renderStatCards(stats) {
     ["Poop Interval", stats.poopInterval],
     ["Sleep", `${stats.sleepPerDay}/day`],
     ["Walk", `${stats.walkPerDay}/day`],
-    ["Box", `${stats.boxPerDay}/day`],
     ["Weight", stats.weightText],
   ];
   return cards
@@ -3262,6 +3264,7 @@ function buildSyncPayload(sourceState) {
   const syncState = {
     ...sourceState,
     photos: [],
+    records: compactSyncRecords(sourceState.records || {}),
     activeSessions: normalizeActiveSessions(sourceState.activeSessions),
     stoppedSessionIds: sourceState.stoppedSessionIds || [],
     sync: {
@@ -3272,9 +3275,31 @@ function buildSyncPayload(sourceState) {
   };
   return makeJsonSafe({
     version: 1,
+    storageFormat: "compact-v1",
     exportedAt: new Date().toISOString(),
     data: syncState,
   });
+}
+
+function compactSyncRecords(records) {
+  return Object.fromEntries(
+    Object.entries(records)
+      .map(([date, entries]) => [
+        date,
+        (entries || []).map((record) => {
+          const compact = {};
+          Object.entries(record || {}).forEach(([key, value]) => {
+            const isEmpty = value === "" || value === null || value === undefined || value === false || (Array.isArray(value) && !value.length);
+            const isUnusedDefault = key === "reminderMinutes" && record.type !== "vaccine" && Number(value) === 60;
+            if (!isEmpty && !isUnusedDefault) {
+              compact[key] = value;
+            }
+          });
+          return compact;
+        }),
+      ])
+      .filter(([, entries]) => entries.length)
+  );
 }
 
 function makeJsonSafe(value) {
@@ -3295,9 +3320,14 @@ function getRecoverySignature(sourceState = state) {
 
 function createLocalBackup(reason) {
   try {
+    const routineBackup = reason === "local save";
+    if (routineBackup && Date.now() - lastRecoveryBackupAt < localBackupIntervalMs) {
+      return;
+    }
     const backups = JSON.parse(localStorage.getItem(backupStorageKey) || "[]");
     const signature = getRecoverySignature(state);
     if (Array.isArray(backups) && backups[0]?.signature === signature) {
+      lastRecoveryBackupAt = Date.now();
       return;
     }
     const backup = {
@@ -3306,8 +3336,9 @@ function createLocalBackup(reason) {
       signature,
       state: makeJsonSafe({ ...state, photos: [] }),
     };
-    const nextBackups = [backup, ...(Array.isArray(backups) ? backups : [])].slice(0, 20);
+    const nextBackups = [backup, ...(Array.isArray(backups) ? backups : [])].slice(0, maxLocalBackups);
     localStorage.setItem(backupStorageKey, JSON.stringify(nextBackups));
+    lastRecoveryBackupAt = Date.now();
   } catch {
     // Backup failure must never block logging.
   }
@@ -3728,8 +3759,7 @@ async function pushFirebaseSync() {
   try {
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    const payload = await writeMergedFirebasePayload(services, ref);
-    await verifyFirebaseWrite(services, ref, payload);
+    await writeMergedFirebasePayload(services, ref);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
     finishSuccessfulFirebaseOperation(syncingRevision);
@@ -3763,23 +3793,32 @@ async function pullFirebaseSync({ confirmPending = true } = {}) {
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
     const firstPull = !state.sync.lastSync;
-    const result = await mergeFirebasePull(services, ref, {
+    const mergeOptions = {
       preferRemoteDefaults: firstPull,
       firstPull,
       preserveRemoteRecords: firstPull,
-    });
+    };
+    const result = pendingLocalPush
+      ? await mergeFirebasePull(services, ref, mergeOptions)
+      : await readFirebasePull(services, ref, mergeOptions);
     if (!result.found) {
       renderSyncStatus("No Firebase puppy book found for this sync code. Push first from one phone.");
       return false;
     }
-    await verifyFirebaseWrite(services, ref, result.payload);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
-    finishSuccessfulFirebaseOperation(syncingRevision);
+    if (result.wrote) {
+      finishSuccessfulFirebaseOperation(syncingRevision);
+    } else if (result.needsPush || localChangeRevision > syncingRevision) {
+      markFirebasePushPending();
+      scheduleAutoFirebaseSync(250);
+    } else {
+      clearFirebaseRetry();
+    }
     renderSyncStatus(
       firstPull
         ? "First Firebase pull complete. Profile and default settings came from Firebase; starter sample records were removed."
-        : `Merge complete. Added ${result.summary.localOnly} local-only records and kept ${result.summary.remoteOnly} Firebase-only records.`
+        : `Refresh complete. Kept ${result.summary.localOnly} local-only records and added ${result.summary.remoteOnly} Firebase-only records.`
     );
     return true;
   } catch (error) {
@@ -3827,8 +3866,7 @@ async function autoFirebaseSync() {
     }
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    const payload = await writeMergedFirebasePayload(services, ref);
-    await verifyFirebaseWrite(services, ref, payload);
+    await writeMergedFirebasePayload(services, ref);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
     syncSucceeded = true;
@@ -3960,7 +3998,24 @@ async function mergeFirebasePull(services, ref, options = {}) {
     throw new Error("Firebase merge did not prepare data");
   }
   mergeSyncedPayload(writtenPayload, options);
-  return { found: true, payload: writtenPayload, summary };
+  return { found: true, payload: writtenPayload, summary, wrote: true, needsPush: false };
+}
+
+async function readFirebasePull(services, ref, options = {}) {
+  const snapshot = await services.getDoc(ref);
+  if (!snapshot.exists()) {
+    return { found: false, payload: null, summary: { localOnly: 0, remoteOnly: 0 }, wrote: false, needsPush: false };
+  }
+  const storedPayload = snapshot.data().bookData;
+  const rawRemote = getPayloadData(storedPayload);
+  const remoteState = migrateState(rawRemote);
+  const localState = options.firstPull ? removeStarterSampleRecords(makeJsonSafe(state)) : makeJsonSafe(state);
+  const summary = getRecordMergeSummary(localState, remoteState);
+  const mergedState = mergeStates(localState, remoteState, { ...options, rawRemote });
+  const needsPush = storedPayload?.storageFormat !== "compact-v1" || hasMergedStateChanges(remoteState, mergedState);
+  const payload = buildSyncPayload(mergedState);
+  mergeSyncedPayload(payload, options);
+  return { found: true, payload, summary, wrote: false, needsPush };
 }
 
 async function verifyFirebaseWrite(services, ref, expectedPayload) {
@@ -4110,9 +4165,10 @@ function mergeSyncedPayload(payload, options = {}) {
   const remote = migrateState(rawRemote);
   const mergeOptions = { ...options, rawRemote };
   const merged = mergeStates(local, remote, mergeOptions);
-  if (hasMergedStateChanges(local, merged)) {
-    createLocalBackup("before Firebase merge");
+  if (!hasMergedStateChanges(local, merged)) {
+    return false;
   }
+  createLocalBackup("before Firebase merge");
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, merged);
   state.photos = localPhotos;
@@ -4122,6 +4178,7 @@ function mergeSyncedPayload(payload, options = {}) {
   hydrateProfileForm();
   refreshCurrentView();
   renderReminderSections();
+  return true;
 }
 
 function refreshCurrentView() {
@@ -4212,19 +4269,38 @@ function removeStarterSampleRecords(sourceState) {
 }
 
 function hasMergedStateChanges(local, merged) {
-  return JSON.stringify(local.records || {}) !== JSON.stringify(merged.records || {}) ||
-    JSON.stringify(normalizeActiveSessions(local.activeSessions || {})) !== JSON.stringify(normalizeActiveSessions(merged.activeSessions || {})) ||
-    JSON.stringify(local.bookmarks || {}) !== JSON.stringify(merged.bookmarks || {}) ||
-    JSON.stringify(local.profile || {}) !== JSON.stringify(merged.profile || {}) ||
-    JSON.stringify(local.owner || {}) !== JSON.stringify(merged.owner || {}) ||
-    JSON.stringify(local.school || {}) !== JSON.stringify(merged.school || {}) ||
-    JSON.stringify(local.schoolSchedule || {}) !== JSON.stringify(merged.schoolSchedule || {}) ||
-    JSON.stringify(local.foodTimes || {}) !== JSON.stringify(merged.foodTimes || {}) ||
-    JSON.stringify(local.foodSettings || {}) !== JSON.stringify(merged.foodSettings || {}) ||
-    JSON.stringify(local.vaccination || {}) !== JSON.stringify(merged.vaccination || {}) ||
-    JSON.stringify(local.settings || {}) !== JSON.stringify(merged.settings || {}) ||
-    JSON.stringify(local.deletedRecordIds || []) !== JSON.stringify(merged.deletedRecordIds || []) ||
-    JSON.stringify(local.stoppedSessionIds || []) !== JSON.stringify(merged.stoppedSessionIds || []);
+  return !sameSignatureSet(getRecordSignatures(local.records || {}), getRecordSignatures(merged.records || {})) ||
+    !sameSignatureSet(getActiveSessionSignatures(local.activeSessions || {}), getActiveSessionSignatures(merged.activeSessions || {})) ||
+    stableJson(local.bookmarks || {}) !== stableJson(merged.bookmarks || {}) ||
+    stableJson(local.profile || {}) !== stableJson(merged.profile || {}) ||
+    stableJson(local.owner || {}) !== stableJson(merged.owner || {}) ||
+    stableJson(local.school || {}) !== stableJson(merged.school || {}) ||
+    stableJson(local.schoolSchedule || {}) !== stableJson(merged.schoolSchedule || {}) ||
+    stableJson(local.foodTimes || {}) !== stableJson(merged.foodTimes || {}) ||
+    stableJson(local.foodSettings || {}) !== stableJson(merged.foodSettings || {}) ||
+    stableJson(local.vaccination || {}) !== stableJson(merged.vaccination || {}) ||
+    stableJson(local.settings || {}) !== stableJson(merged.settings || {}) ||
+    !sameSignatureSet(local.deletedRecordIds || [], merged.deletedRecordIds || []) ||
+    !sameSignatureSet(local.stoppedSessionIds || [], merged.stoppedSessionIds || []);
+}
+
+function stableJson(value) {
+  const canonicalize = (entry) => {
+    if (Array.isArray(entry)) {
+      return entry.map(canonicalize);
+    }
+    if (entry && typeof entry === "object") {
+      return Object.fromEntries(Object.keys(entry).sort().map((key) => [key, canonicalize(entry[key])]));
+    }
+    return entry;
+  };
+  return JSON.stringify(canonicalize(value));
+}
+
+function sameSignatureSet(left, right) {
+  const leftValues = Array.from(new Set(left)).sort();
+  const rightValues = Array.from(new Set(right)).sort();
+  return leftValues.length === rightValues.length && leftValues.every((value, index) => value === rightValues[index]);
 }
 
 function mergeBookmarks(localBookmarks, remoteBookmarks) {

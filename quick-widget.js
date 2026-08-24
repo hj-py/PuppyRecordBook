@@ -11,6 +11,7 @@ const typeConfig = {
   food: { label: "Food", icon: "F", color: "#d69b41" },
   water: { label: "Water", icon: "Wa", color: "#5799ad" },
   box: { label: "Box", icon: "B", color: "#8a7768" },
+  tooth: { label: "Brush teeth", icon: "Bt", color: "#6f8fb4" },
 };
 
 let firebaseServices = null;
@@ -64,7 +65,6 @@ function init() {
 }
 
 async function handleQuickAction(type) {
-  await pullQuietly();
   if (timedTypes.includes(type)) {
     toggleTimedType(type);
   } else if (type === "food") {
@@ -281,11 +281,13 @@ async function syncNow() {
     setStatus("Syncing...");
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    const snapshot = await services.getDoc(ref);
-    if (snapshot.exists()) {
-      mergeRemote(snapshot.data().bookData);
-    }
-    await services.setDoc(ref, { bookData: getSyncPayload(), updatedAt: new Date().toISOString() });
+    await services.runTransaction(services.db, async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (snapshot.exists()) {
+        mergeRemote(snapshot.data().bookData);
+      }
+      transaction.set(ref, { bookData: getSyncPayload(), updatedAt: new Date().toISOString() });
+    });
     state.sync.lastSync = new Date().toLocaleString();
     setSyncPending(false);
     syncRetryDelay = 5000;
@@ -350,13 +352,33 @@ function getSyncPayload() {
   return JSON.parse(
     JSON.stringify({
       version: 1,
+      storageFormat: "compact-v1",
       exportedAt: new Date().toISOString(),
       data: {
         ...state,
         photos: [],
+        records: compactSyncRecords(state.records || {}),
         sync: { code: state.sync?.code || "", lastSync: state.sync?.lastSync || "", firebaseConfig: "" },
       },
     })
+  );
+}
+
+function compactSyncRecords(records) {
+  return Object.fromEntries(
+    Object.entries(records)
+      .map(([date, entries]) => [
+        date,
+        (entries || []).map((record) =>
+          Object.fromEntries(
+            Object.entries(record || {}).filter(([key, value]) => {
+              const isEmpty = value === "" || value === null || value === undefined || value === false || (Array.isArray(value) && !value.length);
+              return !isEmpty && !(key === "reminderMinutes" && record.type !== "vaccine" && Number(value) === 60);
+            })
+          )
+        ),
+      ])
+      .filter(([, entries]) => entries.length)
   );
 }
 
@@ -465,7 +487,7 @@ async function getFirebaseServices(config) {
     db: firestoreModule.getFirestore(app),
     doc: firestoreModule.doc,
     getDoc: firestoreModule.getDoc,
-    setDoc: firestoreModule.setDoc,
+    runTransaction: firestoreModule.runTransaction,
   };
   return firebaseServices;
 }
