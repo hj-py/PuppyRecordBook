@@ -1555,10 +1555,13 @@ function renderQuickLogButtons() {
   elements.activeSessionTimers.innerHTML = sessions
     .map(
       ([type, session]) => `
-        <span>${escapeHtml(typeConfig[type]?.label || type)} ${escapeHtml(getElapsedSessionText(session))}</span>
+        <button type="button" data-active-session="${escapeHtml(type)}">Stop ${escapeHtml(typeConfig[type]?.label || type)} ${escapeHtml(getElapsedSessionText(session))}</button>
       `
     )
     .join("");
+  elements.activeSessionTimers.querySelectorAll("[data-active-session]").forEach((button) => {
+    button.addEventListener("click", () => toggleTimedQuickLog(button.dataset.activeSession));
+  });
 }
 
 function renderFeedingPlanNotice() {

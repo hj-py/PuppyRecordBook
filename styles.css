@@ -674,8 +674,9 @@ select:focus {
   margin-top: 10px;
 }
 
-.active-session-timers span {
+.active-session-timers button {
   padding: 6px 8px;
+  border: 0;
   border-radius: 8px;
   background: #eef3ee;
   color: var(--leaf-dark);
