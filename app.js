@@ -225,6 +225,11 @@ const elements = {
   activeSessionCount: document.querySelector("#activeSessionCount"),
   activeSessionTimers: document.querySelector("#activeSessionTimers"),
   quickLogStatus: document.querySelector("#quickLogStatus"),
+  quickSnackChooser: document.querySelector("#quickSnackChooser"),
+  quickSnackName: document.querySelector("#quickSnackName"),
+  quickSnackAmount: document.querySelector("#quickSnackAmount"),
+  cancelQuickSnack: document.querySelector("#cancelQuickSnack"),
+  saveQuickSnack: document.querySelector("#saveQuickSnack"),
   feedingPlanNotice: document.querySelector("#feedingPlanNotice"),
   feedingPlanNoticeText: document.querySelector("#feedingPlanNoticeText"),
   feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
@@ -491,6 +496,13 @@ function bindEvents() {
   document.querySelectorAll(".quick-log-button").forEach((button) => {
     button.addEventListener("click", () => handleQuickLog(button.dataset.action));
   });
+  elements.quickSnackName.addEventListener("change", () => {
+    elements.quickSnackAmount.value = getSnackDefaultAmount(elements.quickSnackName.value);
+  });
+  elements.cancelQuickSnack.addEventListener("click", closeQuickSnackChooser);
+  elements.saveQuickSnack.addEventListener("click", saveQuickSnack);
+  elements.snackName.addEventListener("change", () => applySnackDefaultAmount(elements.snackName, elements.recordAmount));
+  elements.calendarSnackName.addEventListener("change", () => applySnackDefaultAmount(elements.calendarSnackName, elements.calendarEditorAmount));
 
   elements.puppyName.addEventListener("change", () => {
     state.profile.name = elements.puppyName.value.trim() || "Puppy";
@@ -1607,7 +1619,39 @@ function handleQuickLog(type) {
     return;
   }
 
+  if (type === "snack") {
+    openQuickSnackChooser();
+    return;
+  }
+
   addQuickRecord(type, "", "");
+}
+
+function openQuickSnackChooser() {
+  populateSnackSelect(elements.quickSnackName);
+  if (elements.quickSnackName.disabled) {
+    elements.quickLogStatus.textContent = "Add a snack and its default amount in Settings first.";
+    return;
+  }
+  elements.quickSnackAmount.value = getSnackDefaultAmount(elements.quickSnackName.value);
+  elements.quickSnackChooser.hidden = false;
+  elements.quickSnackName.focus();
+}
+
+function closeQuickSnackChooser() {
+  elements.quickSnackChooser.hidden = true;
+}
+
+function saveQuickSnack() {
+  const snackName = elements.quickSnackName.value.trim();
+  if (!snackName || elements.quickSnackName.disabled) {
+    elements.quickLogStatus.textContent = "Choose a snack before saving.";
+    return;
+  }
+  const amount = elements.quickSnackAmount.value.trim();
+  closeQuickSnackChooser();
+  addQuickRecord("food", amount, "", new Date(), { foodKind: "snack", snackName });
+  elements.quickLogStatus.textContent = `${snackName} saved.`;
 }
 
 function addQuickRecord(type, amount, note, time = new Date(), extra = {}) {
@@ -2868,7 +2912,7 @@ function hydrateProfileForm() {
   elements.foodType2.value = state.foodSettings.type2;
   elements.foodPlanNotice.value = state.foodSettings.planNotice;
   if (document.activeElement !== elements.snackList) {
-    elements.snackList.value = getSnackOptions().join("\n");
+    elements.snackList.value = formatSnackSettings();
   }
   elements.foodDailyTarget.value = state.foodSettings.dailyTargetGrams || "";
   elements.foodExpectedWeight.value = state.foodSettings.expectedAdultWeightKg || 30;
@@ -2883,8 +2927,9 @@ function hydrateProfileForm() {
   elements.foodAmountAfternoon2.value = state.foodSettings.secondAmounts.afternoon;
   elements.foodAmountEvening.value = state.foodSettings.amounts.evening;
   elements.foodAmountEvening2.value = state.foodSettings.secondAmounts.evening;
-  populateSnackSelect(elements.snackName, elements.snackName.value);
-  populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
+  populateSnackSelect(elements.snackName);
+  populateSnackSelect(elements.calendarSnackName);
+  populateSnackSelect(elements.quickSnackName);
   renderFoodRecommendationStatus();
   elements.syncCode.value = state.sync.code;
   elements.firebaseConfig.value = state.sync.firebaseConfig;
@@ -2926,13 +2971,19 @@ function syncProfileFromForm() {
   state.foodSettings.type = elements.foodType.value.trim();
   state.foodSettings.type2 = elements.foodType2.value.trim();
   state.foodSettings.planNotice = elements.foodPlanNotice.value.trim();
-  const nextSnacks = normalizeSnackList(elements.snackList.value);
-  if (JSON.stringify(nextSnacks) !== JSON.stringify(normalizeSnackList(state.foodSettings.snacks))) {
+  const nextSnackSettings = parseSnackSettings(elements.snackList.value);
+  const currentSnackAmounts = normalizeSnackAmounts(state.foodSettings.snackAmounts, state.foodSettings.snacks);
+  if (
+    JSON.stringify(nextSnackSettings.snacks) !== JSON.stringify(normalizeSnackList(state.foodSettings.snacks)) ||
+    JSON.stringify(nextSnackSettings.snackAmounts) !== JSON.stringify(currentSnackAmounts)
+  ) {
     state.foodSettings.snacksUpdatedAt = new Date().toISOString();
   }
-  state.foodSettings.snacks = nextSnacks;
-  populateSnackSelect(elements.snackName, elements.snackName.value);
-  populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
+  state.foodSettings.snacks = nextSnackSettings.snacks;
+  state.foodSettings.snackAmounts = nextSnackSettings.snackAmounts;
+  populateSnackSelect(elements.snackName);
+  populateSnackSelect(elements.calendarSnackName);
+  populateSnackSelect(elements.quickSnackName);
   state.foodSettings.dailyTargetGrams = Math.max(0, Number(elements.foodDailyTarget.value) || 0);
   state.foodSettings.expectedAdultWeightKg = Math.max(5, Number(elements.foodExpectedWeight.value) || 30);
   state.foodSettings.useEstimatedAdultWeight = elements.foodUseEstimatedWeight.checked;
@@ -4232,6 +4283,7 @@ function mergeStates(local, remote, options = {}) {
   const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
   const snackSource = (preferRemoteDefaults && remoteHasSection("foodSettings")) || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
   merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
+  merged.foodSettings.snackAmounts = normalizeSnackAmounts(snackSource?.snackAmounts, merged.foodSettings.snacks);
   merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
   merged.settings = chooseDefaultSection("settings", local.settings, remote.settings);
   merged.vaccination = chooseDefaultSection("vaccination", local.vaccination, remote.vaccination);
@@ -4683,6 +4735,9 @@ function syncFoodKindFields() {
   populateSnackSelect(elements.snackName, elements.snackName.value);
   if (isSnack) {
     elements.recordNote.value = "";
+    if (!elements.recordAmount.value.trim()) {
+      applySnackDefaultAmount(elements.snackName, elements.recordAmount);
+    }
   }
   elements.recordNote.placeholder = isSnack ? "" : notePlaceholder;
 }
@@ -4693,6 +4748,9 @@ function syncCalendarFoodKindFields() {
   populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
   if (isSnack) {
     elements.calendarEditorNote.value = "";
+    if (!elements.calendarEditorAmount.value.trim()) {
+      applySnackDefaultAmount(elements.calendarSnackName, elements.calendarEditorAmount);
+    }
   }
   elements.calendarEditorNote.placeholder = isSnack ? "" : notePlaceholder;
 }
@@ -4721,6 +4779,65 @@ function populateSnackSelect(select, preferred = "") {
 
 function getSnackOptions() {
   return normalizeSnackList(state.foodSettings?.snacks);
+}
+
+function getSnackDefaultAmount(snackName) {
+  const target = String(snackName || "").trim().toLowerCase();
+  const amounts = normalizeSnackAmounts(state.foodSettings?.snackAmounts, getSnackOptions());
+  const matchingName = Object.keys(amounts).find((name) => name.toLowerCase() === target);
+  return matchingName ? amounts[matchingName] : "";
+}
+
+function applySnackDefaultAmount(select, input) {
+  if (!select || !input || select.disabled) {
+    return;
+  }
+  input.value = getSnackDefaultAmount(select.value);
+}
+
+function formatSnackSettings() {
+  const amounts = normalizeSnackAmounts(state.foodSettings?.snackAmounts, getSnackOptions());
+  return getSnackOptions()
+    .map((snack) => (amounts[snack] ? `${snack} | ${amounts[snack]}` : snack))
+    .join("\n");
+}
+
+function parseSnackSettings(value) {
+  const rawLines = String(value || "")
+    .split(/\r?\n/)
+    .flatMap((line) => (line.includes("|") ? [line] : line.split(",")));
+  const snacks = [];
+  const snackAmounts = {};
+  const seen = new Set();
+  rawLines.forEach((line) => {
+    const [rawName, ...amountParts] = String(line || "").split("|");
+    const name = rawName.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key) || snacks.length >= 30) {
+      return;
+    }
+    seen.add(key);
+    snacks.push(name);
+    const amount = amountParts.join("|").trim();
+    if (amount) {
+      snackAmounts[name] = amount.slice(0, 40);
+    }
+  });
+  return { snacks, snackAmounts };
+}
+
+function normalizeSnackAmounts(value, snacks = []) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const entries = Object.entries(source);
+  return Object.fromEntries(
+    normalizeSnackList(snacks)
+      .map((snack) => {
+        const match = entries.find(([name]) => name.toLowerCase() === snack.toLowerCase());
+        const amount = String(match?.[1] || "").trim().slice(0, 40);
+        return amount ? [snack, amount] : null;
+      })
+      .filter(Boolean)
+  );
 }
 
 function normalizeSnackList(value) {
@@ -4880,6 +4997,7 @@ function loadState() {
       type2: "",
       planNotice: "",
       snacks: defaultSnackList,
+      snackAmounts: {},
       snacksUpdatedAt: "",
       reminderMinutes: 5,
       dailyTargetGrams: 223,
@@ -4936,6 +5054,7 @@ function migrateState(value) {
     : [];
   const hasSnackSettings = Boolean(value.foodSettings) && Object.prototype.hasOwnProperty.call(value.foodSettings, "snacks");
   const migratedSnacks = hasSnackSettings ? normalizeSnackList(value.foodSettings.snacks) : defaultSnackList;
+  const migratedSnackAmounts = normalizeSnackAmounts(value.foodSettings?.snackAmounts, migratedSnacks);
 
   return {
     profile: {
@@ -4976,6 +5095,7 @@ function migrateState(value) {
       type2: value.foodSettings?.type2 || "",
       planNotice: value.foodSettings?.planNotice || "",
       snacks: migratedSnacks,
+      snackAmounts: migratedSnackAmounts,
       snacksUpdatedAt: value.foodSettings?.snacksUpdatedAt || "",
       reminderMinutes: Number.isFinite(Number(value.foodSettings?.reminderMinutes)) ? Number(value.foodSettings.reminderMinutes) : 5,
       dailyTargetGrams: Number.isFinite(Number(value.foodSettings?.dailyTargetGrams)) ? Number(value.foodSettings.dailyTargetGrams) : 223,

@@ -86,7 +86,24 @@
               <button type="button" class="quick-log-button" data-action="poop">Poop</button>
               <button type="button" class="quick-log-button timed" data-action="walk">Walk</button>
               <button type="button" class="quick-log-button food" data-action="food">Food</button>
+              <button type="button" class="quick-log-button food" data-action="snack">Snack</button>
               <button type="button" class="quick-log-button" data-action="tooth">Brush teeth</button>
+            </div>
+            <div id="quickSnackChooser" class="quick-snack-chooser" hidden>
+              <div class="form-row">
+                <label>
+                  Snack
+                  <select id="quickSnackName"></select>
+                </label>
+                <label>
+                  Amount
+                  <input id="quickSnackAmount" maxlength="40" placeholder="e.g. 10g or 1 stick" />
+                </label>
+              </div>
+              <div class="form-actions">
+                <button id="cancelQuickSnack" class="quiet-button" type="button">Cancel</button>
+                <button id="saveQuickSnack" class="primary-button" type="button">Save snack</button>
+              </div>
             </div>
             <div id="activeSessionTimers" class="active-session-timers"></div>
             <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk uses start/stop.</p>
@@ -610,8 +627,8 @@
                 <textarea id="foodPlanNotice" maxlength="500" placeholder="e.g. Morning: 50g Food 1 + 30g Food 2"></textarea>
               </label>
               <label>
-                Snack list
-                <textarea id="snackList" placeholder="Dental stick&#10;Training treat&#10;Carrot"></textarea>
+                Snack list and default amounts
+                <textarea id="snackList" placeholder="Dental stick | 1 stick&#10;Training treat | 10g&#10;Carrot | 20g"></textarea>
               </label>
               <label class="josera-target-field">
                 Expected grown weight

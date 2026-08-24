@@ -24,6 +24,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -215,6 +216,41 @@ section {
   background: #fff5df;
 }
 
+.snack-chooser {
+  display: grid;
+  gap: 8px;
+}
+
+.snack-chooser[hidden] {
+  display: none;
+}
+
+.snack-chooser label {
+  margin-top: 0;
+}
+
+.chooser-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.chooser-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+#saveSnack {
+  border-color: var(--leaf);
+  background: var(--leaf);
+  color: var(--paper);
+}
+
 .quick-grid button.water {
   background: #e8f5f8;
 }
@@ -292,6 +328,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-width: 0;
@@ -303,7 +340,8 @@ textarea {
   outline: none;
 }
 
-input {
+input,
+select {
   height: 36px;
   padding: 0 9px;
 }

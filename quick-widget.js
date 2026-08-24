@@ -1,6 +1,7 @@
 const storageKey = "puppy-record-book-state";
 const feedingPlanVisibilityKey = "puppy-record-book-feeding-plan-visible";
 const timedTypes = ["walk", "play", "sleep", "train", "box"];
+const defaultSnackList = ["Dental stick", "Training treat", "Carrot"];
 const typeConfig = {
   pee: { label: "Pee", icon: "P", color: "#7fa6b8" },
   poop: { label: "Poop", icon: "P", color: "#7b5f45" },
@@ -9,6 +10,7 @@ const typeConfig = {
   sleep: { label: "Sleep", icon: "S", color: "#6f7896" },
   train: { label: "Train", icon: "T", color: "#817044" },
   food: { label: "Food", icon: "F", color: "#d69b41" },
+  snack: { label: "Snack", icon: "Sn", color: "#d69b41" },
   water: { label: "Water", icon: "Wa", color: "#5799ad" },
   box: { label: "Box", icon: "B", color: "#8a7768" },
   tooth: { label: "Brush teeth", icon: "Bt", color: "#6f8fb4" },
@@ -30,6 +32,11 @@ const elements = {
   feedingPlanCard: document.querySelector("#feedingPlanCard"),
   feedingPlanText: document.querySelector("#feedingPlanText"),
   feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
+  snackChooser: document.querySelector("#snackChooser"),
+  snackName: document.querySelector("#snackName"),
+  snackAmount: document.querySelector("#snackAmount"),
+  cancelSnack: document.querySelector("#cancelSnack"),
+  saveSnack: document.querySelector("#saveSnack"),
   recordCount: document.querySelector("#recordCount"),
   recordList: document.querySelector("#recordList"),
   syncNow: document.querySelector("#syncNow"),
@@ -47,6 +54,11 @@ function init() {
     button.addEventListener("click", () => handleQuickAction(button.dataset.action));
   });
   elements.syncNow.addEventListener("click", syncNow);
+  elements.snackName.addEventListener("change", () => {
+    elements.snackAmount.value = getSnackDefaultAmount(elements.snackName.value);
+  });
+  elements.cancelSnack.addEventListener("click", closeSnackChooser);
+  elements.saveSnack.addEventListener("click", saveSnackRecord);
   elements.feedingPlanToggle.addEventListener("change", () => {
     feedingPlanVisible = elements.feedingPlanToggle.checked;
     localStorage.setItem(feedingPlanVisibilityKey, feedingPlanVisible ? "1" : "0");
@@ -65,6 +77,10 @@ function init() {
 }
 
 async function handleQuickAction(type) {
+  if (type === "snack") {
+    openSnackChooser();
+    return;
+  }
   if (timedTypes.includes(type)) {
     toggleTimedType(type);
   } else if (type === "food") {
@@ -78,6 +94,49 @@ async function handleQuickAction(type) {
   persist();
   render();
   pushSoon();
+}
+
+function openSnackChooser() {
+  const snacks = getSnackOptions();
+  if (!snacks.length) {
+    setStatus("Add a snack and its default amount in the main app Settings first.");
+    return;
+  }
+  elements.snackName.innerHTML = snacks.map((snack) => `<option value="${escapeHtml(snack)}">${escapeHtml(snack)}</option>`).join("");
+  elements.snackAmount.value = getSnackDefaultAmount(elements.snackName.value);
+  elements.snackChooser.hidden = false;
+  elements.snackName.focus();
+}
+
+function closeSnackChooser() {
+  elements.snackChooser.hidden = true;
+}
+
+function saveSnackRecord() {
+  const snackName = elements.snackName.value.trim();
+  if (!snackName) {
+    setStatus("Choose a snack before saving.");
+    return;
+  }
+  addQuickRecord("food", elements.snackAmount.value.trim(), "", { foodKind: "snack", snackName });
+  closeSnackChooser();
+  setStatus(`${snackName} saved.`);
+  setSyncPending(true);
+  persist();
+  render();
+  pushSoon();
+}
+
+function getSnackOptions() {
+  return normalizeSnackList(state.foodSettings?.snacks);
+}
+
+function getSnackDefaultAmount(snackName) {
+  const target = String(snackName || "").trim().toLowerCase();
+  const amounts = state.foodSettings?.snackAmounts;
+  if (!amounts || typeof amounts !== "object" || Array.isArray(amounts)) return "";
+  const match = Object.entries(amounts).find(([name]) => name.toLowerCase() === target);
+  return String(match?.[1] || "").trim();
 }
 
 function toggleTimedType(type) {
@@ -181,9 +240,12 @@ function render() {
     ? records
         .slice(0, 10)
         .map((record) => {
-          const config = typeConfig[record.type] || { label: record.type, icon: "?", color: "#6e6a5f" };
+          const isSnack = record.type === "food" && (record.foodKind === "snack" || record.snackName);
+          const config = isSnack ? typeConfig.snack : typeConfig[record.type] || { label: record.type, icon: "?", color: "#6e6a5f" };
           const meta = timedTypes.includes(record.type)
             ? `${formatDuration(getRecordDuration(record))} - ${formatTime(record.startTime || record.time)} - ${formatTime(record.endTime)}`
+            : isSnack
+              ? [record.amount, record.snackName || "Snack"].filter(Boolean).join(" - ")
             : [record.type === "poop" && record.abnormalPoop ? "⚠️ Abnormal poop" : "", record.amount, record.note].filter(Boolean).join(" - ");
           return `
             <article class="record-item">
@@ -403,12 +465,19 @@ function mergeRemote(payload) {
   if (remoteHasSection("schoolSchedule")) state.schoolSchedule = { ...state.schoolSchedule, ...remote.schoolSchedule };
   if (remoteHasSection("foodTimes")) state.foodTimes = { ...state.foodTimes, ...remote.foodTimes };
   if (remoteHasSection("foodSettings")) {
+    const localFoodSettings = state.foodSettings || {};
     state.foodSettings = {
       ...state.foodSettings,
       ...remote.foodSettings,
       amounts: { ...state.foodSettings?.amounts, ...remote.foodSettings?.amounts },
       secondAmounts: { ...state.foodSettings?.secondAmounts, ...remote.foodSettings?.secondAmounts },
     };
+    const localSnackTime = Date.parse(localFoodSettings.snacksUpdatedAt || "") || 0;
+    const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
+    const snackSource = remoteSnackTime >= localSnackTime ? remote.foodSettings : localFoodSettings;
+    state.foodSettings.snacks = normalizeSnackList(snackSource.snacks);
+    state.foodSettings.snackAmounts = normalizeSnackAmounts(snackSource.snackAmounts, state.foodSettings.snacks);
+    state.foodSettings.snacksUpdatedAt = snackSource.snacksUpdatedAt || "";
   }
   if (remoteHasSection("bookmarks")) state.bookmarks = { ...state.bookmarks, ...remote.bookmarks };
   if (remoteHasSection("vaccination")) state.vaccination = { ...state.vaccination, ...remote.vaccination };
@@ -524,6 +593,7 @@ function loadState() {
 }
 
 function migrateState(value) {
+  const snacks = normalizeSnackList(value.foodSettings?.snacks || defaultSnackList);
   return {
     profile: { name: value.profile?.name || "Leo", birthday: value.profile?.birthday || "2026-03-14", weightKg: Number(value.profile?.weightKg) || 5.1 },
     foodTimes: { morning: value.foodTimes?.morning || "07:30", afternoon: value.foodTimes?.afternoon || "", evening: value.foodTimes?.evening || "18:30" },
@@ -533,6 +603,8 @@ function migrateState(value) {
       type: value.foodSettings?.type || "Puppy food",
       type2: value.foodSettings?.type2 || "",
       planNotice: value.foodSettings?.planNotice || "",
+      snacks,
+      snackAmounts: normalizeSnackAmounts(value.foodSettings?.snackAmounts, snacks),
       reminderMinutes: Number(value.foodSettings?.reminderMinutes ?? 5),
       amounts: {
         morning: value.foodSettings?.amounts?.morning || "110g",
@@ -558,6 +630,34 @@ function migrateState(value) {
     vaccination: value.vaccination || {},
     settings: value.settings || {},
   };
+}
+
+function normalizeSnackList(value) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((snack) => String(snack || "").trim())
+    .filter(Boolean)
+    .filter((snack) => {
+      const key = snack.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 30);
+}
+
+function normalizeSnackAmounts(value, snacks) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const entries = Object.entries(source);
+  return Object.fromEntries(
+    normalizeSnackList(snacks)
+      .map((snack) => {
+        const match = entries.find(([name]) => name.toLowerCase() === snack.toLowerCase());
+        const amount = String(match?.[1] || "").trim().slice(0, 40);
+        return amount ? [snack, amount] : null;
+      })
+      .filter(Boolean)
+  );
 }
 
 function persist() {
