@@ -47,18 +47,8 @@
       </section>
 
       <section id="snackChooser" class="snack-chooser" hidden>
-        <label>
-          Snack
-          <select id="snackName"></select>
-        </label>
-        <label>
-          Amount
-          <input id="snackAmount" maxlength="40" placeholder="e.g. 10g or 1 stick" />
-        </label>
-        <div class="chooser-actions">
-          <button id="cancelSnack" type="button">Cancel</button>
-          <button id="saveSnack" type="button">Save snack</button>
-        </div>
+        <select id="snackName" aria-label="Choose snack"></select>
+        <button id="cancelSnack" type="button" aria-label="Close snack chooser" title="Close">&times;</button>
       </section>
 
       <section>

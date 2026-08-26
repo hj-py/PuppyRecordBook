@@ -90,20 +90,8 @@
               <button type="button" class="quick-log-button" data-action="tooth">Brush teeth</button>
             </div>
             <div id="quickSnackChooser" class="quick-snack-chooser" hidden>
-              <div class="form-row">
-                <label>
-                  Snack
-                  <select id="quickSnackName"></select>
-                </label>
-                <label>
-                  Amount
-                  <input id="quickSnackAmount" maxlength="40" placeholder="e.g. 10g or 1 stick" />
-                </label>
-              </div>
-              <div class="form-actions">
-                <button id="cancelQuickSnack" class="quiet-button" type="button">Cancel</button>
-                <button id="saveQuickSnack" class="primary-button" type="button">Save snack</button>
-              </div>
+              <select id="quickSnackName" aria-label="Choose snack"></select>
+              <button id="cancelQuickSnack" class="quick-snack-close" type="button" aria-label="Close snack chooser" title="Close">&times;</button>
             </div>
             <div id="activeSessionTimers" class="active-session-timers"></div>
             <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk uses start/stop.</p>

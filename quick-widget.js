@@ -34,9 +34,7 @@ const elements = {
   feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
   snackChooser: document.querySelector("#snackChooser"),
   snackName: document.querySelector("#snackName"),
-  snackAmount: document.querySelector("#snackAmount"),
   cancelSnack: document.querySelector("#cancelSnack"),
-  saveSnack: document.querySelector("#saveSnack"),
   recordCount: document.querySelector("#recordCount"),
   recordList: document.querySelector("#recordList"),
   syncNow: document.querySelector("#syncNow"),
@@ -54,11 +52,8 @@ function init() {
     button.addEventListener("click", () => handleQuickAction(button.dataset.action));
   });
   elements.syncNow.addEventListener("click", syncNow);
-  elements.snackName.addEventListener("change", () => {
-    elements.snackAmount.value = getSnackDefaultAmount(elements.snackName.value);
-  });
+  elements.snackName.addEventListener("change", saveSnackRecord);
   elements.cancelSnack.addEventListener("click", closeSnackChooser);
-  elements.saveSnack.addEventListener("click", saveSnackRecord);
   elements.feedingPlanToggle.addEventListener("change", () => {
     feedingPlanVisible = elements.feedingPlanToggle.checked;
     localStorage.setItem(feedingPlanVisibilityKey, feedingPlanVisible ? "1" : "0");
@@ -102,8 +97,11 @@ function openSnackChooser() {
     setStatus("Add a snack and its default amount in the main app Settings first.");
     return;
   }
-  elements.snackName.innerHTML = snacks.map((snack) => `<option value="${escapeHtml(snack)}">${escapeHtml(snack)}</option>`).join("");
-  elements.snackAmount.value = getSnackDefaultAmount(elements.snackName.value);
+  elements.snackName.innerHTML = [
+    '<option value="">Choose snack</option>',
+    ...snacks.map((snack) => `<option value="${escapeHtml(snack)}">${escapeHtml(snack)}</option>`),
+  ].join("");
+  elements.snackName.value = "";
   elements.snackChooser.hidden = false;
   elements.snackName.focus();
 }
@@ -115,10 +113,9 @@ function closeSnackChooser() {
 function saveSnackRecord() {
   const snackName = elements.snackName.value.trim();
   if (!snackName) {
-    setStatus("Choose a snack before saving.");
     return;
   }
-  addQuickRecord("food", elements.snackAmount.value.trim(), "", { foodKind: "snack", snackName });
+  addQuickRecord("food", getSnackDefaultAmount(snackName), "", { foodKind: "snack", snackName });
   closeSnackChooser();
   setStatus(`${snackName} saved.`);
   setSyncPending(true);

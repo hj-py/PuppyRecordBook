@@ -218,6 +218,8 @@ section {
 
 .snack-chooser {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  align-items: center;
   gap: 8px;
 }
 
@@ -225,30 +227,17 @@ section {
   display: none;
 }
 
-.snack-chooser label {
-  margin-top: 0;
-}
-
-.chooser-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 7px;
-}
-
-.chooser-actions button {
-  min-height: 34px;
-  padding: 0 12px;
+#cancelSnack {
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--cream);
+  color: var(--coral);
+  font-size: 1.15rem;
   font-weight: 900;
-}
-
-#saveSnack {
-  border-color: var(--leaf);
-  background: var(--leaf);
-  color: var(--paper);
+  line-height: 1;
 }
 
 .quick-grid button.water {

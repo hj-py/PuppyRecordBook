@@ -227,9 +227,7 @@ const elements = {
   quickLogStatus: document.querySelector("#quickLogStatus"),
   quickSnackChooser: document.querySelector("#quickSnackChooser"),
   quickSnackName: document.querySelector("#quickSnackName"),
-  quickSnackAmount: document.querySelector("#quickSnackAmount"),
   cancelQuickSnack: document.querySelector("#cancelQuickSnack"),
-  saveQuickSnack: document.querySelector("#saveQuickSnack"),
   feedingPlanNotice: document.querySelector("#feedingPlanNotice"),
   feedingPlanNoticeText: document.querySelector("#feedingPlanNoticeText"),
   feedingPlanToggle: document.querySelector("#feedingPlanToggle"),
@@ -496,11 +494,8 @@ function bindEvents() {
   document.querySelectorAll(".quick-log-button").forEach((button) => {
     button.addEventListener("click", () => handleQuickLog(button.dataset.action));
   });
-  elements.quickSnackName.addEventListener("change", () => {
-    elements.quickSnackAmount.value = getSnackDefaultAmount(elements.quickSnackName.value);
-  });
+  elements.quickSnackName.addEventListener("change", saveQuickSnack);
   elements.cancelQuickSnack.addEventListener("click", closeQuickSnackChooser);
-  elements.saveQuickSnack.addEventListener("click", saveQuickSnack);
   elements.snackName.addEventListener("change", () => applySnackDefaultAmount(elements.snackName, elements.recordAmount));
   elements.calendarSnackName.addEventListener("change", () => applySnackDefaultAmount(elements.calendarSnackName, elements.calendarEditorAmount));
 
@@ -1628,12 +1623,17 @@ function handleQuickLog(type) {
 }
 
 function openQuickSnackChooser() {
-  populateSnackSelect(elements.quickSnackName);
-  if (elements.quickSnackName.disabled) {
+  const snacks = getSnackOptions();
+  if (!snacks.length) {
     elements.quickLogStatus.textContent = "Add a snack and its default amount in Settings first.";
     return;
   }
-  elements.quickSnackAmount.value = getSnackDefaultAmount(elements.quickSnackName.value);
+  elements.quickSnackName.disabled = false;
+  elements.quickSnackName.innerHTML = [
+    '<option value="">Choose snack</option>',
+    ...snacks.map((snack) => `<option value="${escapeHtml(snack)}">${escapeHtml(snack)}</option>`),
+  ].join("");
+  elements.quickSnackName.value = "";
   elements.quickSnackChooser.hidden = false;
   elements.quickSnackName.focus();
 }
@@ -1644,11 +1644,10 @@ function closeQuickSnackChooser() {
 
 function saveQuickSnack() {
   const snackName = elements.quickSnackName.value.trim();
-  if (!snackName || elements.quickSnackName.disabled) {
-    elements.quickLogStatus.textContent = "Choose a snack before saving.";
+  if (!snackName) {
     return;
   }
-  const amount = elements.quickSnackAmount.value.trim();
+  const amount = getSnackDefaultAmount(snackName);
   closeQuickSnackChooser();
   addQuickRecord("food", amount, "", new Date(), { foodKind: "snack", snackName });
   elements.quickLogStatus.textContent = `${snackName} saved.`;
@@ -2261,9 +2260,10 @@ function getCategoryDetail(entry, activeCategoryType = "") {
   }
 
   if (entry.type === "food") {
-    const detail = getFoodKind(entry) === "snack" ? [getSnackName(entry), snackMatchesCurrentFood(entry) ? "same as current food" : ""].filter(Boolean).join(" - ") : entry.note;
+    const isSnack = getFoodKind(entry) === "snack";
+    const detail = isSnack ? [getSnackName(entry), snackMatchesCurrentFood(entry) ? "same as current food" : ""].filter(Boolean).join(" - ") : entry.note;
     return {
-      primary: [entry.amount || "Food", getFoodKindLabel(entry)].join(" - "),
+      primary: isSnack ? [entry.amount, "Snack"].filter(Boolean).join(" - ") : [entry.amount || "Food", "Food"].join(" - "),
       secondary: detail,
     };
   }
@@ -2929,7 +2929,6 @@ function hydrateProfileForm() {
   elements.foodAmountEvening2.value = state.foodSettings.secondAmounts.evening;
   populateSnackSelect(elements.snackName);
   populateSnackSelect(elements.calendarSnackName);
-  populateSnackSelect(elements.quickSnackName);
   renderFoodRecommendationStatus();
   elements.syncCode.value = state.sync.code;
   elements.firebaseConfig.value = state.sync.firebaseConfig;
@@ -2983,7 +2982,6 @@ function syncProfileFromForm() {
   state.foodSettings.snackAmounts = nextSnackSettings.snackAmounts;
   populateSnackSelect(elements.snackName);
   populateSnackSelect(elements.calendarSnackName);
-  populateSnackSelect(elements.quickSnackName);
   state.foodSettings.dailyTargetGrams = Math.max(0, Number(elements.foodDailyTarget.value) || 0);
   state.foodSettings.expectedAdultWeightKg = Math.max(5, Number(elements.foodExpectedWeight.value) || 30);
   state.foodSettings.useEstimatedAdultWeight = elements.foodUseEstimatedWeight.checked;
