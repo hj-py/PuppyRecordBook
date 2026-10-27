@@ -23,8 +23,13 @@ let pullInProgress = false;
 let syncRetryDelay = 5000;
 const pendingSyncKey = "puppy-record-book-widget-sync-pending";
 let syncPending = localStorage.getItem(pendingSyncKey) === "1";
+const serializeFirebase = PuppySync.serialQueue();
+let pushPromise = null;
+let pullPromise = null;
 let feedingPlanVisible = localStorage.getItem(feedingPlanVisibilityKey) !== "0";
 const state = loadState();
+syncPending ||= Boolean(state._pendingSync);
+let lastPersistedStateJson = JSON.stringify(state);
 const elements = {
   widgetTitle: document.querySelector("#widgetTitle"),
   statusText: document.querySelector("#statusText"),
@@ -62,6 +67,18 @@ function init() {
   [elements.syncCode, elements.firebaseConfig].forEach((input) => input.addEventListener("input", saveSyncSettings));
   window.setInterval(render, 1000);
   window.addEventListener("focus", resumeSync);
+  window.addEventListener("online", resumeSync);
+  window.addEventListener("storage", (event) => {
+    if (event.key !== storageKey || !event.newValue) return;
+    const incoming = JSON.parse(event.newValue);
+    Object.assign(state, PuppySync.mergeBook(state, migrateState(incoming)));
+    if (incoming._pendingSync) {
+      state._pendingSync = incoming._pendingSync;
+      syncPending = true;
+      pushSoon();
+    }
+    render();
+  });
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       resumeSync();
@@ -149,7 +166,8 @@ function toggleTimedType(type) {
   state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), existing.id]));
   delete state.activeSessions[type];
   addRecord(toKey(start), {
-    id: createId(),
+    id: `session-${existing.id}`,
+    updatedAt: now.toISOString(),
     type,
     time: start.toTimeString().slice(0, 5),
     startTime: start.toTimeString().slice(0, 5),
@@ -306,6 +324,7 @@ function pushSoon() {
 
 function setSyncPending(pending) {
   syncPending = pending;
+  if (pending) state._pendingSync = createId();
   localStorage.setItem(pendingSyncKey, pending ? "1" : "0");
 }
 
@@ -327,6 +346,11 @@ async function resumeSync() {
 }
 
 async function syncNow() {
+  if (!pushPromise) pushPromise = serializeFirebase(() => syncNowExclusive()).finally(() => { pushPromise = null; });
+  return pushPromise;
+}
+
+async function syncNowExclusive() {
   if (syncInProgress) {
     return;
   }
@@ -336,27 +360,42 @@ async function syncNow() {
     return;
   }
   syncInProgress = true;
+  const syncingToken = state._pendingSync;
+  const localSnapshot = PuppySync.clone(state);
   try {
+    if (navigator.onLine === false) throw new Error("Offline. Will retry when online");
     setStatus("Syncing...");
     const services = await getFirebaseServices(settings);
     const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    let writtenPayload;
     await services.runTransaction(services.db, async (transaction) => {
       const snapshot = await transaction.get(ref);
-      if (snapshot.exists()) {
-        mergeRemote(snapshot.data().bookData);
-      }
-      transaction.set(ref, { bookData: getSyncPayload(), updatedAt: new Date().toISOString() });
+      const merged = snapshot.exists()
+        ? PuppySync.mergeBook(localSnapshot, migrateState(PuppySync.remoteData(snapshot.data().bookData)), !localSnapshot.sync.lastSync)
+        : localSnapshot;
+      writtenPayload = getSyncPayload(merged);
+      transaction.set(ref, { bookData: writtenPayload, updatedAt: new Date().toISOString() });
     });
+    const confirmed = await services.getDoc(ref);
+    if (!confirmed.exists()) throw new Error("Firebase did not confirm the puppy book");
+    PuppySync.assertRecordsPresent(writtenPayload, confirmed.data().bookData);
+    mergeRemote(writtenPayload);
     state.sync.lastSync = new Date().toLocaleString();
-    setSyncPending(false);
+    const storedToken = JSON.parse(localStorage.getItem(storageKey) || "{}")._pendingSync;
+    const fullySynced = state._pendingSync === syncingToken && storedToken === syncingToken;
+    if (fullySynced) delete state._pendingSync;
+    syncPending = !fullySynced;
+    localStorage.setItem(pendingSyncKey, syncPending ? "1" : "0");
     syncRetryDelay = 5000;
     persist();
     updateWidgetTitle();
     render();
-    setStatus(`Synced ${state.sync.lastSync}`);
+    setStatus(fullySynced ? `Synced ${state.sync.lastSync}` : "New changes saved locally; finishing sync...");
+    if (!fullySynced) pushSoon();
   } catch (error) {
-    setSyncPending(true);
-    setStatus(`Sync failed: ${getFirebaseErrorMessage(error)}`);
+    syncPending = true;
+    localStorage.setItem(pendingSyncKey, "1");
+    setStatus(`Sync failed: ${getFirebaseErrorMessage(error)}. Changes remain on this device; retrying.`);
     retrySyncSoon();
   } finally {
     syncInProgress = false;
@@ -364,6 +403,11 @@ async function syncNow() {
 }
 
 async function pullQuietly() {
+  if (!pullPromise) pullPromise = serializeFirebase(() => pullQuietlyExclusive()).finally(() => { pullPromise = null; });
+  return pullPromise;
+}
+
+async function pullQuietlyExclusive() {
   if (pullInProgress || syncInProgress) {
     return;
   }
@@ -377,6 +421,7 @@ async function pullQuietly() {
     const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
     if (snapshot.exists()) {
       mergeRemote(snapshot.data().bookData);
+      state.sync.lastSync = new Date().toLocaleString();
       persist();
       updateWidgetTitle();
       render();
@@ -385,6 +430,7 @@ async function pullQuietly() {
     // Keep the widget quiet during background checks.
   } finally {
     pullInProgress = false;
+    if (syncPending) pushSoon();
   }
 }
 
@@ -407,20 +453,22 @@ function getFirebaseSettings(silent = false) {
   }
 }
 
-function getSyncPayload() {
-  return JSON.parse(
+function getSyncPayload(source = state) {
+  const payload = JSON.parse(
     JSON.stringify({
       version: 1,
       storageFormat: "compact-v1",
       exportedAt: new Date().toISOString(),
       data: {
-        ...state,
+        ...source,
         photos: [],
-        records: compactSyncRecords(state.records || {}),
+        records: compactSyncRecords(source.records || {}),
         sync: { code: state.sync?.code || "", lastSync: state.sync?.lastSync || "", firebaseConfig: "" },
       },
     })
   );
+  delete payload.data._pendingSync;
+  return payload;
 }
 
 function compactSyncRecords(records) {
@@ -442,63 +490,13 @@ function compactSyncRecords(records) {
 }
 
 function mergeRemote(payload) {
-  const rawRemote = payload?.data || payload || {};
+  const rawRemote = PuppySync.remoteData(payload);
   const remote = migrateState(rawRemote);
-  const remoteHasSection = (sectionName) => Object.prototype.hasOwnProperty.call(rawRemote, sectionName);
-  const localSync = state.sync;
-  const localRecords = state.records || {};
-  const remoteRecords = remote.records || {};
-  const deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), ...(remote.deletedRecordIds || [])]));
-  state.records = mergeRecords(localRecords, remoteRecords, deletedRecordIds);
-  state.activeSessions = mergeActiveSessions(state.activeSessions || {}, remote.activeSessions || {}, [
-    ...(state.stoppedSessionIds || []),
-    ...(remote.stoppedSessionIds || []),
-  ]);
-  state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), ...(remote.stoppedSessionIds || [])]));
-  state.deletedRecordIds = deletedRecordIds;
-  if (remoteHasSection("profile")) state.profile = { ...state.profile, ...remote.profile };
-  if (remoteHasSection("owner")) state.owner = { ...state.owner, ...remote.owner };
-  if (remoteHasSection("school")) state.school = { ...state.school, ...remote.school };
-  if (remoteHasSection("schoolSchedule")) state.schoolSchedule = { ...state.schoolSchedule, ...remote.schoolSchedule };
-  if (remoteHasSection("foodTimes")) state.foodTimes = { ...state.foodTimes, ...remote.foodTimes };
-  if (remoteHasSection("foodSettings")) {
-    const localFoodSettings = state.foodSettings || {};
-    state.foodSettings = {
-      ...state.foodSettings,
-      ...remote.foodSettings,
-      amounts: { ...state.foodSettings?.amounts, ...remote.foodSettings?.amounts },
-      secondAmounts: { ...state.foodSettings?.secondAmounts, ...remote.foodSettings?.secondAmounts },
-    };
-    const localSnackTime = Date.parse(localFoodSettings.snacksUpdatedAt || "") || 0;
-    const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
-    const snackSource = remoteSnackTime >= localSnackTime ? remote.foodSettings : localFoodSettings;
-    state.foodSettings.snacks = normalizeSnackList(snackSource.snacks);
-    state.foodSettings.snackAmounts = normalizeSnackAmounts(snackSource.snackAmounts, state.foodSettings.snacks);
-    state.foodSettings.snacksUpdatedAt = snackSource.snacksUpdatedAt || "";
-  }
-  if (remoteHasSection("bookmarks")) state.bookmarks = { ...state.bookmarks, ...remote.bookmarks };
-  if (remoteHasSection("vaccination")) state.vaccination = { ...state.vaccination, ...remote.vaccination };
-  if (remoteHasSection("settings")) state.settings = { ...state.settings, ...remote.settings };
-  state.sync = localSync;
+  Object.assign(state, PuppySync.mergeBook(state, remote, !state.sync.lastSync));
 }
 
 function mergeRecords(localRecords, remoteRecords, deletedIds = []) {
-  const deleted = new Set(deletedIds);
-  const merged = {};
-  [...Object.keys(remoteRecords), ...Object.keys(localRecords)].forEach((date) => {
-    const byId = new Map();
-    [...(remoteRecords[date] || []), ...(localRecords[date] || [])].forEach((record) => {
-      const id = record.id || createId();
-      if (!deleted.has(id)) {
-        byId.set(id, { ...record, id });
-      }
-    });
-    const list = Array.from(byId.values()).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-    if (list.length) {
-      merged[date] = list;
-    }
-  });
-  return merged;
+  return PuppySync.mergeRecords(localRecords, remoteRecords, deletedIds);
 }
 
 function mergeActiveSessions(localSessions, remoteSessions, stoppedIds = []) {
@@ -552,7 +550,7 @@ async function getFirebaseServices(config) {
     projectId: config.projectId,
     db: firestoreModule.getFirestore(app),
     doc: firestoreModule.doc,
-    getDoc: firestoreModule.getDoc,
+    getDoc: firestoreModule.getDocFromServer,
     runTransaction: firestoreModule.runTransaction,
   };
   return firebaseServices;
@@ -592,8 +590,9 @@ function loadState() {
 function migrateState(value) {
   const snacks = normalizeSnackList(value.foodSettings?.snacks || defaultSnackList);
   return {
-    profile: { name: value.profile?.name || "Leo", birthday: value.profile?.birthday || "2026-03-14", weightKg: Number(value.profile?.weightKg) || 5.1 },
-    foodTimes: { morning: value.foodTimes?.morning || "07:30", afternoon: value.foodTimes?.afternoon || "", evening: value.foodTimes?.evening || "18:30" },
+    ...value,
+    profile: { ...value.profile, name: value.profile?.name || "Leo", birthday: value.profile?.birthday || "2026-03-14", weightKg: Number(value.profile?.weightKg) || 5.1 },
+    foodTimes: { ...value.foodTimes, morning: value.foodTimes?.morning ?? "07:30", afternoon: value.foodTimes?.afternoon ?? "", evening: value.foodTimes?.evening ?? "18:30" },
     foodSettings: {
       ...value.foodSettings,
       targetMode: value.foodSettings?.targetMode === "manual" || value.foodSettings?.autoTarget === false ? "manual" : "josera",
@@ -604,9 +603,9 @@ function migrateState(value) {
       snackAmounts: normalizeSnackAmounts(value.foodSettings?.snackAmounts, snacks),
       reminderMinutes: Number(value.foodSettings?.reminderMinutes ?? 5),
       amounts: {
-        morning: value.foodSettings?.amounts?.morning || "110g",
+        morning: value.foodSettings?.amounts?.morning ?? "110g",
         afternoon: value.foodSettings?.amounts?.afternoon || "",
-        evening: value.foodSettings?.amounts?.evening || "120g",
+        evening: value.foodSettings?.amounts?.evening ?? "120g",
       },
       secondAmounts: {
         morning: value.foodSettings?.secondAmounts?.morning || "",
@@ -658,7 +657,20 @@ function normalizeSnackAmounts(value, snacks) {
 }
 
 function persist() {
-  localStorage.setItem(storageKey, JSON.stringify(state));
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored && stored !== lastPersistedStateJson) {
+      Object.assign(state, PuppySync.mergeBook(state, migrateState(JSON.parse(stored))));
+    }
+    const serialized = JSON.stringify(state);
+    localStorage.setItem(storageKey, serialized);
+    lastPersistedStateJson = serialized;
+    return true;
+  } catch (error) {
+    syncPending = true;
+    setStatus("Local save failed. Keep this window open and export a backup from the main app.");
+    return false;
+  }
 }
 
 function setStatus(message) {

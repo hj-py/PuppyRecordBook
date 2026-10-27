@@ -95,6 +95,7 @@
             </div>
             <div id="activeSessionTimers" class="active-session-timers"></div>
             <p id="quickLogStatus" class="legal-note">Tap a button to record now. Walk uses start/stop.</p>
+            <p id="homeSyncStatus" class="legal-note" role="status"></p>
           </section>
 
           <section class="category-panel" aria-label="Category records">
@@ -204,6 +205,10 @@
                 Snack
                 <select id="snackName"></select>
               </label>
+              <div id="foodComponentFields" class="food-component-fields" hidden>
+                <label><span id="foodComponentLabel1">Food 1 (g)</span><input id="foodComponentAmount1" inputmode="decimal" maxlength="40" /></label>
+                <label><span id="foodComponentLabel2">Food 2 (g)</span><input id="foodComponentAmount2" inputmode="decimal" maxlength="40" /></label>
+              </div>
               <label id="vetKindField" hidden>
                 Visit type
                 <select id="vetKind">
@@ -353,6 +358,10 @@
                 Snack
                 <select id="calendarSnackName"></select>
               </label>
+              <div id="calendarFoodComponentFields" class="food-component-fields" hidden>
+                <label><span id="calendarFoodComponentLabel1">Food 1 (g)</span><input id="calendarFoodComponentAmount1" inputmode="decimal" maxlength="40" /></label>
+                <label><span id="calendarFoodComponentLabel2">Food 2 (g)</span><input id="calendarFoodComponentAmount2" inputmode="decimal" maxlength="40" /></label>
+              </div>
               <label id="calendarVetKindField" hidden>
                 Visit type
                 <select id="calendarVetKind">
@@ -728,6 +737,8 @@
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="./sync-core.js"></script>
+    <script src="./record-editing.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

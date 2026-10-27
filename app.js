@@ -1,6 +1,10 @@
 const storageKey = "puppy-record-book-state";
 const backupStorageKey = "puppy-record-book-state-backups";
 const pendingSyncStorageKey = "puppy-record-book-firebase-pending";
+const serializeFirebase = PuppySync.serialQueue();
+let firebasePushPromise = null;
+let firebasePullPromise = null;
+let firebaseAutoPromise = null;
 const feedingPlanVisibilityKey = "puppy-record-book-feeding-plan-visible";
 const localBackupIntervalMs = 5 * 60 * 1000;
 const maxLocalBackups = 3;
@@ -112,11 +116,20 @@ let persistOptions = {};
 let selectedStatusYear = today.getFullYear();
 let activeCalendarType = "walk";
 let calendarEditingRecordId = null;
+let calendarEditingRecordDate = null;
+let foodComponentDraft = [];
+let calendarFoodComponentDraft = [];
 let homeBookmarkMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 let selectedBookmarkYear = today.getFullYear();
 let feedingPlanVisible = localStorage.getItem(feedingPlanVisibilityKey) !== "0";
 
 const elements = {
+  foodComponentFields: document.querySelector("#foodComponentFields"),
+  foodComponentLabels: [document.querySelector("#foodComponentLabel1"), document.querySelector("#foodComponentLabel2")],
+  foodComponentAmounts: [document.querySelector("#foodComponentAmount1"), document.querySelector("#foodComponentAmount2")],
+  calendarFoodComponentFields: document.querySelector("#calendarFoodComponentFields"),
+  calendarFoodComponentLabels: [document.querySelector("#calendarFoodComponentLabel1"), document.querySelector("#calendarFoodComponentLabel2")],
+  calendarFoodComponentAmounts: [document.querySelector("#calendarFoodComponentAmount1"), document.querySelector("#calendarFoodComponentAmount2")],
   pullRefreshIndicator: document.querySelector("#pullRefreshIndicator"),
   appToast: document.querySelector("#appToast"),
   mainView: document.querySelector("#mainView"),
@@ -225,6 +238,7 @@ const elements = {
   activeSessionCount: document.querySelector("#activeSessionCount"),
   activeSessionTimers: document.querySelector("#activeSessionTimers"),
   quickLogStatus: document.querySelector("#quickLogStatus"),
+  homeSyncStatus: document.querySelector("#homeSyncStatus"),
   quickSnackChooser: document.querySelector("#quickSnackChooser"),
   quickSnackName: document.querySelector("#quickSnackName"),
   cancelQuickSnack: document.querySelector("#cancelQuickSnack"),
@@ -291,6 +305,7 @@ const elements = {
 init();
 
 function init() {
+  clearRetiredGpsSettings();
   elements.puppyName.value = state.profile.name;
   elements.adultWeight.value = state.profile.weightKg;
   const foodRecommendationChanged = refreshFoodRecommendationIfNeeded();
@@ -310,9 +325,29 @@ function init() {
   startFirebaseSyncLifecycle();
   startActiveSessionTimer();
   renderMain();
+  renderSyncStatus(hasPendingFirebasePush() ? "Saved on this device. Waiting to sync." : state.sync.lastSync ? `Last Firebase sync: ${state.sync.lastSync}` : "Saved on this device. Sync is not connected yet.");
+}
+
+function clearRetiredGpsSettings() {
+  try {
+    localStorage.removeItem("puppy-record-book-gps-walk");
+  } catch {
+    // Removing obsolete location settings must not block access to records.
+  }
 }
 
 function bindEvents() {
+  for (const calendar of [false, true]) {
+    const container = calendar ? elements.calendarInlineEditor : document.querySelector("#quickForm");
+    container.addEventListener("keydown", (event) => {
+      if (PuppyEditing.saveKey(event) && event.target.matches("input:not([type=checkbox]), textarea")) {
+        event.preventDefault();
+        calendar ? saveCalendarRecord() : saveRecord();
+      }
+    });
+    const inputs = calendar ? elements.calendarFoodComponentAmounts : elements.foodComponentAmounts;
+    inputs.forEach(input => input.addEventListener("input", () => refreshMixedFoodTotal(calendar)));
+  }
   elements.feedingPlanToggle.addEventListener("change", () => {
     feedingPlanVisible = elements.feedingPlanToggle.checked;
     localStorage.setItem(feedingPlanVisibilityKey, feedingPlanVisible ? "1" : "0");
@@ -899,7 +934,9 @@ function saveCalendarRecord() {
     return;
   }
 
-  const record = buildCalendarRecordFromForm(createId());
+  let record;
+  try { record = buildCalendarRecordFromForm(createId()); }
+  catch (error) { showToast(error.message, 7000); return; }
   state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
   applyWeightRecordToProfile(record);
   if (record.type === "vaccine") {
@@ -914,6 +951,7 @@ function saveCalendarRecord() {
 function buildCalendarRecordFromForm(id) {
   const record = {
     id,
+    updatedAt: new Date().toISOString(),
     type: activeCalendarType,
     time: elements.calendarEditorTime.value || elements.calendarEditorStartTime.value || new Date().toTimeString().slice(0, 5),
     amount: elements.calendarEditorAmount.value.trim(),
@@ -946,11 +984,14 @@ function buildCalendarRecordFromForm(id) {
     record.note = "";
   }
 
-  return record;
+  const original = (state.records[calendarEditingRecordDate || selectedDate] || []).find(entry => entry.id === calendarEditingRecordId);
+  return PuppyEditing.foodEdit(original, record, elements.calendarFoodComponentAmounts.map(input => input.value));
 }
 
 function startCalendarEditRecord(record) {
   calendarEditingRecordId = record.id;
+  calendarEditingRecordDate = selectedDate;
+  setFoodComponentDraft(true, record);
   activeCalendarType = record.type;
   elements.calendarInlineEditor.hidden = false;
   elements.calendarEditorDate.value = selectedDate;
@@ -977,15 +1018,20 @@ function startCalendarEditRecord(record) {
 }
 
 function updateCalendarEditedRecord() {
-  const records = state.records[selectedDate] || [];
+  const originalDate = calendarEditingRecordDate || selectedDate;
+  const records = state.records[originalDate] || [];
   const record = records.find((entry) => entry.id === calendarEditingRecordId);
   if (!record) {
-    clearCalendarEditMode();
+    showToast("This log changed on another device. Reopen the latest record before saving.", 7000);
     return;
   }
 
-  const replacement = buildCalendarRecordFromForm(createId());
-  state.records[selectedDate] = records.map((entry) => (entry.id === record.id ? replacement : entry));
+  let replacement;
+  try { replacement = buildCalendarRecordFromForm(createId()); }
+  catch (error) { showToast(error.message, 7000); return; }
+  state.records[originalDate] = records.filter(entry => entry.id !== record.id);
+  if (!state.records[originalDate].length) delete state.records[originalDate];
+  state.records[selectedDate] = [...(state.records[selectedDate] || []), replacement];
   state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), record.id]));
   applyWeightRecordToProfile(replacement);
   syncProfileWeightFromRecords();
@@ -999,6 +1045,7 @@ function updateCalendarEditedRecord() {
 }
 
 function clearCalendarFormAfterSave() {
+  setFoodComponentDraft(true, null);
   elements.calendarEditorAmount.value = "";
   elements.calendarFoodKind.value = "food";
   populateSnackSelect(elements.calendarSnackName);
@@ -1013,6 +1060,7 @@ function clearCalendarFormAfterSave() {
 
 function clearCalendarEditMode() {
   calendarEditingRecordId = null;
+  calendarEditingRecordDate = null;
   clearCalendarFormAfterSave();
   elements.calendarSaveRecord.textContent = "Save";
   elements.calendarCancelEdit.hidden = true;
@@ -1658,6 +1706,7 @@ function addQuickRecord(type, amount, note, time = new Date(), extra = {}) {
   const durationMinutes = timedRecordTypes.includes(type) ? parseDurationMinutes(amount) : 0;
   const record = {
     id: createId(),
+    updatedAt: new Date().toISOString(),
     type,
     time: time.toTimeString().slice(0, 5),
     amount,
@@ -1695,7 +1744,7 @@ function toggleTimedQuickLog(type) {
   state.stoppedSessionIds = Array.from(new Set([...(state.stoppedSessionIds || []), existing.id]));
   delete state.activeSessions[type];
   renderQuickLogButtons();
-  addQuickRecord(type, amount, "", start);
+  addQuickRecord(type, amount, "", start, { id: `session-${existing.id}` });
   elements.quickLogStatus.textContent = `${typeConfig[type].label} ended. ${amount} saved.`;
 }
 
@@ -1786,6 +1835,42 @@ function getFoodComponents(record) {
         .filter((component) => component.name || component.amount)
         .slice(0, 2)
     : [];
+}
+
+function setFoodComponentDraft(calendar, record) {
+  const components = getFoodComponents(record);
+  if (calendar) calendarFoodComponentDraft = components;
+  else foodComponentDraft = components;
+  const inputs = calendar ? elements.calendarFoodComponentAmounts : elements.foodComponentAmounts;
+  const labels = calendar ? elements.calendarFoodComponentLabels : elements.foodComponentLabels;
+  inputs.forEach((input, index) => {
+    input.value = components[index]?.amount || "";
+    labels[index].textContent = `${components[index]?.name || `Food ${index + 1}`} (g)`;
+  });
+}
+
+function syncFoodComponentVisibility(calendar) {
+  const components = calendar ? calendarFoodComponentDraft : foodComponentDraft;
+  const type = calendar ? activeCalendarType : activeType;
+  const kind = calendar ? elements.calendarFoodKind.value : elements.foodKind.value;
+  const visible = type === "food" && kind !== "snack" && components.length > 1;
+  const container = calendar ? elements.calendarFoodComponentFields : elements.foodComponentFields;
+  const amount = calendar ? elements.calendarEditorAmount : elements.recordAmount;
+  container.hidden = !visible;
+  amount.readOnly = visible;
+  amount.setAttribute("aria-label", visible ? "Total food amount, calculated from both foods" : "Amount");
+}
+
+function refreshMixedFoodTotal(calendar) {
+  const inputs = calendar ? elements.calendarFoodComponentAmounts : elements.foodComponentAmounts;
+  const amount = calendar ? elements.calendarEditorAmount : elements.recordAmount;
+  if (!amount.readOnly) return;
+  try {
+    const values = inputs.map(input => PuppyEditing.grams(input.value));
+    amount.value = values.some(value => value !== null) ? PuppyEditing.format(values.reduce((sum, value) => sum + (value || 0), 0)) : "";
+  } catch {
+    amount.value = "";
+  }
 }
 
 function minutesOfDay(time) {
@@ -1995,7 +2080,9 @@ function saveRecord() {
     return;
   }
 
-  const record = buildRecordFromForm(createId());
+  let record;
+  try { record = buildRecordFromForm(createId()); }
+  catch (error) { showToast(error.message, 7000); return; }
 
   state.records[selectedDate] = [...(state.records[selectedDate] || []), record];
   if (record.type === "weight") {
@@ -2025,6 +2112,7 @@ function saveRecord() {
 function buildRecordFromForm(id) {
   const record = {
     id: createId(),
+    updatedAt: new Date().toISOString(),
     type: activeType,
     time: elements.recordTime.value || elements.recordStartTime.value || new Date().toTimeString().slice(0, 5),
     amount: elements.recordAmount.value.trim(),
@@ -2057,10 +2145,12 @@ function buildRecordFromForm(id) {
     record.note = "";
   }
 
-  return record;
+  const original = (state.records[selectedDate] || []).find(entry => entry.id === editingRecordId);
+  return PuppyEditing.foodEdit(original, record, elements.foodComponentAmounts.map(input => input.value));
 }
 
 function clearFormAfterSave() {
+  setFoodComponentDraft(false, null);
   elements.recordAmount.value = "";
   elements.foodKind.value = "food";
   populateSnackSelect(elements.snackName);
@@ -2075,6 +2165,7 @@ function clearFormAfterSave() {
 
 function startEditRecord(record) {
   editingRecordId = record.id;
+  setFoodComponentDraft(false, record);
   activeType = record.type;
   elements.recordTime.value = record.time;
   elements.recordStartTime.value = record.startTime || record.time;
@@ -2102,11 +2193,13 @@ function updateEditedRecord() {
   const records = state.records[selectedDate] || [];
   const record = records.find((entry) => entry.id === editingRecordId);
   if (!record) {
-    clearEditMode();
+    showToast("This log changed on another device. Reopen the latest record before saving.", 7000);
     return;
   }
 
-  const replacement = buildRecordFromForm(createId());
+  let replacement;
+  try { replacement = buildRecordFromForm(createId()); }
+  catch (error) { showToast(error.message, 7000); return; }
   state.records[selectedDate] = records.map((entry) => (entry.id === record.id ? replacement : entry));
   state.deletedRecordIds = Array.from(new Set([...(state.deletedRecordIds || []), record.id]));
   if (replacement.type === "weight") {
@@ -2126,6 +2219,7 @@ function updateEditedRecord() {
 
 function clearEditMode() {
   editingRecordId = null;
+  setFoodComponentDraft(false, null);
   elements.recordAmount.value = "";
   elements.foodKind.value = "food";
   populateSnackSelect(elements.snackName);
@@ -3325,6 +3419,7 @@ function buildSyncPayload(sourceState) {
       firebaseConfig: "",
     },
   };
+  delete syncState._pendingSync;
   return makeJsonSafe({
     version: 1,
     storageFormat: "compact-v1",
@@ -3789,6 +3884,7 @@ function isDuplicateImportedRecord(date, record) {
 
 function renderSyncStatus(message) {
   elements.syncStatus.textContent = message;
+  elements.homeSyncStatus.textContent = message;
 }
 
 function showToast(message, duration = 3200) {
@@ -3801,12 +3897,18 @@ function showToast(message, duration = 3200) {
 }
 
 async function pushFirebaseSync() {
+  if (!firebasePushPromise) firebasePushPromise = serializeFirebase(() => pushFirebaseSyncExclusive()).finally(() => { firebasePushPromise = null; });
+  return firebasePushPromise;
+}
+
+async function pushFirebaseSyncExclusive() {
   const settings = validateFirebaseSettings();
   if (!settings) {
     return false;
   }
 
   const syncingRevision = localChangeRevision;
+  const syncingToken = state._pendingSync;
   renderSyncStatus("Pushing to Firebase...");
   try {
     const services = await getFirebaseServices(settings);
@@ -3814,8 +3916,8 @@ async function pushFirebaseSync() {
     await writeMergedFirebasePayload(services, ref);
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
-    finishSuccessfulFirebaseOperation(syncingRevision);
-    renderSyncStatus(`Pushed to Firebase sync code "${state.sync.code}".`);
+    const fullySynced = finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
+    renderSyncStatus(fullySynced ? `Confirmed by Firebase at ${state.sync.lastSync}.` : "New changes saved on this device. Finishing sync...");
     return true;
   } catch (error) {
     queueFirebaseRetry(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
@@ -3824,12 +3926,18 @@ async function pushFirebaseSync() {
 }
 
 async function pullFirebaseSync({ confirmPending = true } = {}) {
+  if (!firebasePullPromise) firebasePullPromise = serializeFirebase(() => pullFirebaseSyncExclusive({ confirmPending })).finally(() => { firebasePullPromise = null; });
+  return firebasePullPromise;
+}
+
+async function pullFirebaseSyncExclusive({ confirmPending = true } = {}) {
   const settings = validateFirebaseSettings();
   if (!settings) {
     return false;
   }
   const pendingLocalPush = hasPendingFirebasePush();
   const syncingRevision = localChangeRevision;
+  const syncingToken = state._pendingSync;
   if (pendingLocalPush && confirmPending) {
     const shouldMerge = window.confirm(
       "This device has local changes that failed to push. Pulling now will compare this device with Firebase, keep local-only records, keep Firebase-only records, and write the merged puppy book back to Firebase. Continue?"
@@ -3860,7 +3968,7 @@ async function pullFirebaseSync({ confirmPending = true } = {}) {
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
     if (result.wrote) {
-      finishSuccessfulFirebaseOperation(syncingRevision);
+      finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
     } else if (result.needsPush || localChangeRevision > syncingRevision) {
       markFirebasePushPending();
       scheduleAutoFirebaseSync(250);
@@ -3898,6 +4006,12 @@ function scheduleAutoFirebaseSync(delay = 900) {
 }
 
 async function autoFirebaseSync() {
+  if (!firebaseAutoPromise) firebaseAutoPromise = serializeFirebase(() => autoFirebaseSyncExclusive()).finally(() => { firebaseAutoPromise = null; });
+  return firebaseAutoPromise;
+}
+
+async function autoFirebaseSyncExclusive() {
+  if (!hasPendingFirebasePush() && !state._pendingSync) return;
   if (importInProgress || !hasFirebaseSettings()) {
     return;
   }
@@ -3909,6 +4023,7 @@ async function autoFirebaseSync() {
   autoSyncInProgress = true;
   autoSyncQueued = false;
   const syncingRevision = localChangeRevision;
+  const syncingToken = state._pendingSync;
   let syncSucceeded = false;
   renderSyncStatus("Auto-syncing with Firebase...");
   try {
@@ -3922,9 +4037,9 @@ async function autoFirebaseSync() {
     state.sync.lastSync = new Date().toLocaleString();
     persist({ skipAutoSync: true });
     syncSucceeded = true;
-    finishSuccessfulFirebaseOperation(syncingRevision);
-    renderSyncStatus(`Auto-synced Firebase at ${state.sync.lastSync}.`);
-    showToast("Saved and synced with Firebase.", 1800);
+    const fullySynced = finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
+    renderSyncStatus(fullySynced ? `Confirmed by Firebase at ${state.sync.lastSync}.` : "New changes saved on this device. Finishing sync...");
+    if (fullySynced) showToast("Saved and confirmed by Firebase.", 1800);
   } catch (error) {
     queueFirebaseRetry(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
   } finally {
@@ -3944,7 +4059,7 @@ function queueFirebaseRetry(message) {
   }
   firebaseRetryCount += 1;
   const delay = Math.min(60000, 5000 * firebaseRetryCount);
-  const retryMessage = `${message}. Local records are kept here. Auto-pulls are paused; tap Pull to compare and merge now, or auto-retry will push in ${Math.round(delay / 1000)} sec.`;
+  const retryMessage = `${message}. Changes remain on this device. Retrying in ${Math.round(delay / 1000)} sec while the app is open, or when you reopen it.`;
   renderSyncStatus(retryMessage);
   showToast(retryMessage, 9000);
   window.clearTimeout(firebaseRetryTimer);
@@ -3967,7 +4082,7 @@ function clearFirebaseRetry() {
 
 function hasStoredPendingFirebasePush() {
   try {
-    return localStorage.getItem(pendingSyncStorageKey) === "1";
+    return Boolean(JSON.parse(localStorage.getItem(storageKey) || "{}")._pendingSync) || localStorage.getItem(pendingSyncStorageKey) === "1";
   } catch {
     return false;
   }
@@ -3989,25 +4104,32 @@ function markFirebasePushComplete() {
   }
 }
 
-function finishSuccessfulFirebaseOperation(syncingRevision) {
+function finishSuccessfulFirebaseOperation(syncingRevision, syncingToken) {
   clearFirebaseRetry();
-  if (localChangeRevision === syncingRevision) {
+  const storedToken = JSON.parse(localStorage.getItem(storageKey) || "{}")._pendingSync;
+  if (localChangeRevision === syncingRevision && state._pendingSync === syncingToken && storedToken === syncingToken) {
+    delete state._pendingSync;
+    if (!persist({ skipAutoSync: true })) return false;
     markFirebasePushComplete();
     return true;
   }
   markFirebasePushPending();
   autoSyncQueued = true;
+  scheduleAutoFirebaseSync(350);
   return false;
 }
 
 async function writeMergedFirebasePayload(services, ref) {
+  if (navigator.onLine === false) throw new Error("Offline. Saved changes will retry when the app is online");
+  const localSnapshot = state.sync.lastSync ? makeJsonSafe(state) : removeStarterSampleRecords(makeJsonSafe(state));
   let writtenPayload = null;
   await services.runTransaction(services.db, async (transaction) => {
     const snapshot = await transaction.get(ref);
-    let mergedState = makeJsonSafe(state);
+    let mergedState = makeJsonSafe(localSnapshot);
     if (snapshot.exists()) {
-      const remoteState = migrateState(getPayloadData(snapshot.data().bookData));
-      mergedState = mergeStates(makeJsonSafe(state), remoteState);
+      const rawRemote = PuppySync.remoteData(snapshot.data().bookData);
+      const remoteState = migrateState(rawRemote);
+      mergedState = mergeStates(localSnapshot, remoteState, { preferRemoteDefaults: !localSnapshot.sync.lastSync, rawRemote });
     }
     writtenPayload = buildSyncPayload(mergedState);
     transaction.set(ref, {
@@ -4018,11 +4140,14 @@ async function writeMergedFirebasePayload(services, ref) {
   if (!writtenPayload) {
     throw new Error("Firebase transaction did not prepare data");
   }
-  mergeSyncedPayload(writtenPayload);
+  await verifyFirebaseWrite(services, ref, writtenPayload);
+  mergeSyncedPayload(writtenPayload, { firstPull: !localSnapshot.sync.lastSync, preferRemoteDefaults: !localSnapshot.sync.lastSync, baseline: localSnapshot });
   return writtenPayload;
 }
 
 async function mergeFirebasePull(services, ref, options = {}) {
+  if (navigator.onLine === false) throw new Error("Offline. Saved changes will retry when the app is online");
+  const localSnapshot = makeJsonSafe(state);
   let writtenPayload = null;
   let found = false;
   let summary = { localOnly: 0, remoteOnly: 0 };
@@ -4032,9 +4157,9 @@ async function mergeFirebasePull(services, ref, options = {}) {
       return;
     }
     found = true;
-    const rawRemote = getPayloadData(snapshot.data().bookData);
+    const rawRemote = PuppySync.remoteData(snapshot.data().bookData);
     const remoteState = migrateState(rawRemote);
-    const localState = options.firstPull ? removeStarterSampleRecords(makeJsonSafe(state)) : makeJsonSafe(state);
+    const localState = options.firstPull ? removeStarterSampleRecords(localSnapshot) : localSnapshot;
     summary = getRecordMergeSummary(localState, remoteState);
     const mergedState = mergeStates(localState, remoteState, { ...options, rawRemote });
     writtenPayload = buildSyncPayload(mergedState);
@@ -4049,24 +4174,26 @@ async function mergeFirebasePull(services, ref, options = {}) {
   if (!writtenPayload) {
     throw new Error("Firebase merge did not prepare data");
   }
-  mergeSyncedPayload(writtenPayload, options);
+  await verifyFirebaseWrite(services, ref, writtenPayload);
+  mergeSyncedPayload(writtenPayload, { ...options, baseline: localSnapshot });
   return { found: true, payload: writtenPayload, summary, wrote: true, needsPush: false };
 }
 
 async function readFirebasePull(services, ref, options = {}) {
+  const baseline = makeJsonSafe(state);
   const snapshot = await services.getDoc(ref);
   if (!snapshot.exists()) {
     return { found: false, payload: null, summary: { localOnly: 0, remoteOnly: 0 }, wrote: false, needsPush: false };
   }
   const storedPayload = snapshot.data().bookData;
-  const rawRemote = getPayloadData(storedPayload);
+  const rawRemote = PuppySync.remoteData(storedPayload);
   const remoteState = migrateState(rawRemote);
   const localState = options.firstPull ? removeStarterSampleRecords(makeJsonSafe(state)) : makeJsonSafe(state);
   const summary = getRecordMergeSummary(localState, remoteState);
   const mergedState = mergeStates(localState, remoteState, { ...options, rawRemote });
   const needsPush = storedPayload?.storageFormat !== "compact-v1" || hasMergedStateChanges(remoteState, mergedState);
   const payload = buildSyncPayload(mergedState);
-  mergeSyncedPayload(payload, options);
+  mergeSyncedPayload(payload, { ...options, baseline });
   return { found: true, payload, summary, wrote: false, needsPush };
 }
 
@@ -4076,10 +4203,7 @@ async function verifyFirebaseWrite(services, ref, expectedPayload) {
     throw new Error("Firebase write verification failed: puppy book was not found after push");
   }
   const remotePayload = snapshot.data().bookData;
-  const missing = findMissingSyncData(expectedPayload, remotePayload);
-  if (missing.length) {
-    throw new Error(`Firebase write verification failed: missing ${missing.slice(0, 4).join(", ")}`);
-  }
+  PuppySync.assertRecordsPresent(expectedPayload, remotePayload);
 }
 
 function findMissingSyncData(expectedPayload, remotePayload) {
@@ -4134,6 +4258,7 @@ function getRecordSignatures(records) {
         JSON.stringify(getFoodComponents(record)),
         record.accident ? "1" : "0",
         record.abnormalPoop ? "1" : "0",
+        record.updatedAt || "",
       ].join("|")
     )
   );
@@ -4168,6 +4293,17 @@ function hasFirebaseSettings() {
 }
 
 function startFirebaseSyncLifecycle() {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== storageKey || !event.newValue) return;
+    try {
+      const incoming = JSON.parse(event.newValue);
+      if (incoming._pendingSync) state._pendingSync = incoming._pendingSync;
+      mergeSyncedPayload({ data: incoming });
+      if (incoming._pendingSync) scheduleAutoFirebaseSync(350);
+    } catch {
+      renderSyncStatus("Another window's local save could not be read. This window's records are unchanged.");
+    }
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       if (currentView === "profile") {
@@ -4227,8 +4363,10 @@ function mergeSyncedPayload(payload, options = {}) {
   syncProfileWeightFromRecords();
   persist({ skipAutoSync: true });
   hydrateMainProfile();
-  hydrateProfileForm();
-  refreshCurrentView();
+  if (currentView !== "profile" && !editingRecordId && !calendarEditingRecordId && !isEditableElement(document.activeElement)) {
+    hydrateProfileForm();
+    refreshCurrentView();
+  }
   renderReminderSections();
   return true;
 }
@@ -4264,8 +4402,10 @@ function refreshCurrentView() {
 function mergeStates(local, remote, options = {}) {
   const preferRemoteDefaults = Boolean(options.preferRemoteDefaults);
   const remoteHasSection = (sectionName) => Object.prototype.hasOwnProperty.call(options.rawRemote || {}, sectionName);
+  const mayUseRemoteDefault = sectionName => preferRemoteDefaults && remoteHasSection(sectionName) &&
+    (!options.baseline || stableJson(local[sectionName]) === stableJson(options.baseline[sectionName]));
   const chooseDefaultSection = (sectionName, localSection, remoteSection) =>
-    preferRemoteDefaults && remoteHasSection(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
+    mayUseRemoteDefault(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
   const deletedRecordIds = options.preserveRemoteRecords
     ? Array.from(new Set(remote.deletedRecordIds || []))
@@ -4279,7 +4419,7 @@ function mergeStates(local, remote, options = {}) {
   merged.foodSettings = chooseDefaultSection("foodSettings", local.foodSettings, remote.foodSettings);
   const localSnackTime = Date.parse(local.foodSettings?.snacksUpdatedAt || "") || 0;
   const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
-  const snackSource = (preferRemoteDefaults && remoteHasSection("foodSettings")) || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
+  const snackSource = mayUseRemoteDefault("foodSettings") || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
   merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
   merged.foodSettings.snackAmounts = normalizeSnackAmounts(snackSource?.snackAmounts, merged.foodSettings.snacks);
   merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
@@ -4371,11 +4511,7 @@ function mergeBookmarks(localBookmarks, remoteBookmarks) {
       return;
     }
     const latest = local.updatedAt >= remote.updatedAt ? local : remote;
-    const other = latest === local ? remote : local;
-    merged[date] = {
-      ...latest,
-      note: latest.note || (latest.bookmarked && other.bookmarked ? other.note : ""),
-    };
+    merged[date] = { ...latest };
   });
   return Object.fromEntries(Object.entries(merged).filter(([, value]) => value));
 }
@@ -4441,22 +4577,7 @@ function mergeActiveSessions(localSessions = {}, remoteSessions = {}, stoppedSes
 }
 
 function mergeRecords(localRecords, remoteRecords, deletedRecordIds = []) {
-  const merged = {};
-  const deleted = new Set(deletedRecordIds);
-  [...Object.keys(remoteRecords), ...Object.keys(localRecords)].forEach((date) => {
-    const byId = new Map();
-    [...(remoteRecords[date] || []), ...(localRecords[date] || [])].forEach((record) => {
-      const id = record.id || createId();
-      if (!deleted.has(id)) {
-        byId.set(id, { ...record, id });
-      }
-    });
-    const records = Array.from(byId.values()).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-    if (records.length) {
-      merged[date] = records;
-    }
-  });
-  return merged;
+  return PuppySync.mergeRecords(localRecords, remoteRecords, deletedRecordIds);
 }
 
 function validateFirebaseSettings() {
@@ -4542,7 +4663,7 @@ async function getFirebaseServices(config) {
     projectId: config.projectId,
     db: firestoreModule.getFirestore(app),
     doc: firestoreModule.doc,
-    getDoc: firestoreModule.getDoc,
+    getDoc: firestoreModule.getDocFromServer,
     runTransaction: firestoreModule.runTransaction,
   };
   return firebaseServices;
@@ -4728,6 +4849,7 @@ function resetCalendarEditorTimeToNow() {
 }
 
 function syncFoodKindFields() {
+  syncFoodComponentVisibility(false);
   const isSnack = activeType === "food" && elements.foodKind.value === "snack";
   elements.snackNameField.hidden = !isSnack;
   populateSnackSelect(elements.snackName, elements.snackName.value);
@@ -4741,6 +4863,7 @@ function syncFoodKindFields() {
 }
 
 function syncCalendarFoodKindFields() {
+  syncFoodComponentVisibility(true);
   const isSnack = activeCalendarType === "food" && elements.calendarFoodKind.value === "snack";
   elements.calendarSnackNameField.hidden = !isSnack;
   populateSnackSelect(elements.calendarSnackName, elements.calendarSnackName.value);
@@ -5055,6 +5178,7 @@ function migrateState(value) {
   const migratedSnackAmounts = normalizeSnackAmounts(value.foodSettings?.snackAmounts, migratedSnacks);
 
   return {
+    _pendingSync: value._pendingSync,
     profile: {
       name: migratedName,
       birthday: migratedBirthday || shiftMonthKey(today, -ageMonths),
@@ -5145,6 +5269,18 @@ function migrateState(value) {
 
 function persist(options = {}) {
   persistOptions = options;
+  try {
+    const stored = localStorage.getItem(storageKey);
+    if (stored && stored !== lastPersistedStateJson) {
+      const incoming = migrateState(JSON.parse(stored));
+      Object.assign(state, mergeStates(state, incoming));
+    }
+  } catch {
+    // Never replace the in-memory book when an older local save is unreadable.
+  }
+  if (!options.skipAutoSync && JSON.stringify(state) !== lastPersistedStateJson) {
+    state._pendingSync = createId();
+  }
   let serializedState = JSON.stringify(state);
   if (!options.force && serializedState === lastPersistedStateJson) {
     persistOptions = {};
@@ -5176,6 +5312,7 @@ function persist(options = {}) {
     if (!options.skipAutoSync) {
       localChangeRevision += 1;
       markFirebasePushPending();
+      renderSyncStatus("Saved on this device. Waiting for Firebase confirmation.");
     }
     if (!options.skipRecoveryBackup) {
       createLocalBackup("local save");

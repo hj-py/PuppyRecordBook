@@ -362,6 +362,17 @@ select:focus {
   gap: 8px;
 }
 
+.food-component-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.food-component-fields[hidden] { display: none; }
+.food-component-fields label { min-width: 0; overflow-wrap: anywhere; }
+.food-component-fields input { width: 100%; min-width: 0; box-sizing: border-box; }
+input[readonly] { background-color: var(--cream); }
+
 .inline-fields label span {
   position: absolute;
   right: 10px;
