@@ -1,5 +1,25 @@
 # Puppy Record Book PWA and Sync
 
+## October 27 Sync Audit (Web v109 / Windows v30)
+
+- Confirmation now checks profiles, settings, bookmarks, food/snack settings, record dates and timer identities, in addition to records and deletion markers. A missing confirmation stays pending.
+- Local settings edited before the first sync are not silently replaced by older cloud settings. A pending deletion is retained during first sync. Changing the sync code or Firebase configuration during a request stops that request from applying data from the old target.
+- The Windows widget refuses to overwrite Firebase data if a record, timer or field cannot be represented safely. It merges records by ID across dates and requeues local-only data found during a pull. A failed local save shows a warning and leaves sync pending.
+- A malformed browser-widget save is never replaced by an empty book. A corrupt Windows primary save no longer replaces a good recovery backup when recovered.
+- Settings > App & Sync now has `Save book backup` and `Restore backup file`. The JSON file includes records, profile, bookmarks and settings, but excludes sync credentials, sync code and the device-only thumbnail. Restore merges data; missing records get new IDs so old deletion markers cannot erase them again. Duplicates can occur. Running timers and deletion history from the backup are not restored over the current device.
+- A large-book warning uses UTF-8 JSON size as an **estimate**, not Firestore's exact stored size. The current one-document design has a 1 MiB hard limit and needs a future, carefully tested data migration before it can support indefinite growth.
+- The main app preserves deliberately blank feeding times and does not rename a puppy named Mochi. The Windows widget preserves fractional food targets and decimal weights under German regional settings.
+
+### Before Updating
+
+On **each device** with unique or unsynced data, use Settings > App & Sync > Export Excel before updating. CSV export covers records, not profile settings, bookmarks, active timers, deletion history, or the local thumbnail. Retain any recovery snapshots and do not clear storage, uninstall the PWA, or delete the Windows app-data folder. An Excel export is not a complete backup of the book. Once v109 is installed, also use `Save book backup` on each device and store the private JSON files somewhere independent of the app.
+
+These changes were tested with synthetic data only. The Firestore emulator, your live Firebase project, and physical iPhone/iPad devices were not tested. A previous, independently published version remains on GitHub Pages until this version is published. Update all sharing devices together, including the Windows widget; old clients can still write using older sync behavior.
+
+Windows v30 is built at `NativeWidget/bin/Release/native-widget-v30/PuppyQuickLog.exe`. Exit the older widget from its tray menu before starting it. For iPhone/iPad, publish the web files together to the same GitHub Pages site, then reopen the existing home-screen app online. Do not reinstall it to update.
+
+Open risks: Firestore document size and write contention, simultaneous offline edits or starts on different devices, device-clock skew, browser storage eviction, and weak shared-code-only access rules can still lead to lost or inaccessible data. The new backup is manual and its recovery has limits described above. Successful local tests cannot guarantee data safety. A reviewed multi-document synchronization migration is still needed. See `SYNC-AUDIT.md` for details.
+
 ## October 2026 Editing Update (Web v108 / Windows v29)
 
 - Windows: select Edit beside a log to change its date, time, amount and note. Press Enter to save, Escape to cancel, or Shift+Enter for a new line in a note. Enter while the date calendar is open selects the date instead of saving.

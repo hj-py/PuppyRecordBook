@@ -50,7 +50,11 @@ function server(client, remote = book(), hooks = {}) {
       maximum = Math.max(maximum, ++active);
       try {
         let staged;
-        await fn({ get: async () => ({ exists: () => true, data: () => ({ bookData: clone(current) }) }), set: (_ref, data) => { staged = data.bookData; } });
+        await fn({ get: async () => {
+          const snapshot = clone(current);
+          if (hooks.transactionRead) await hooks.transactionRead();
+          return { exists: () => true, data: () => ({ bookData: snapshot }) };
+        }, set: (_ref, data) => { staged = data.bookData; } });
         if (hooks.commit) await hooks.commit();
         current = clone(staged);
       } finally { active--; }
@@ -95,6 +99,10 @@ test('verification accepts a later stop/deletion but rejects missing data', () =
   assert.doesNotThrow(() => core.assertRecordsPresent(a, b));
   assert.throws(() => core.remoteData({ wrong: true }));
 });
+test('large book warning uses UTF-8 JSON size and is explicitly an estimate', () => {
+  assert.equal(core.capacityWarning({value:'small'}), '');
+  assert.match(core.capacityWarning({value:'x'.repeat(600 * 1024)}), /estimate.*1 MiB/i);
+});
 for (const file of ['app.js', 'quick-widget.js']) {
   test(`${file}: edit during push remains pending, then retry merges both books`, async () => {
     const client = app(file, book([record('local')]));
@@ -136,6 +144,51 @@ for (const file of ['app.js', 'quick-widget.js']) {
     assert.equal(JSON.parse(client.storage.get('puppy-record-book-state')).records[day].length, 2);
   });
 }
+
+for (const file of ['app.js', 'quick-widget.js']) {
+  test(`${file}: changing sync target during a transaction cannot write or merge the wrong book`, async () => {
+    const client = app(file, book([record('local')]));
+    client.run(file === 'app.js' ? 'persist(); state._pendingSync="pending"; persist({skipAutoSync:true})' : 'setSyncPending(true); persist()');
+    const cloud = server(client, book([record('remote')]), {transactionRead: async () => {
+      client.run(`state.sync.code='another-book-code';`);
+    }});
+    await client.run(file === 'app.js' ? 'pushFirebaseSync()' : 'syncNow()');
+    assert.deepEqual(cloud.data().records[day].map(r=>r.id), ['remote']);
+    assert.deepEqual(client.state().records[day].map(r=>r.id), ['local']);
+    assert.ok(client.state()._pendingSync);
+  });
+}
+
+test('concurrent device transactions retry and retain both records', async () => {
+  const a = app('app.js',book([record('phone-a')]));
+  const b = app('quick-widget.js',book([record('phone-b')]));
+  a.run('persist(); state._pendingSync="pending-a"; persist({skipAutoSync:true})');
+  b.run('setSyncPending(true); persist()');
+  let current = {data:book([record('cloud')])}, version = 0, initialReads = 0, release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const services = {
+    db:{}, doc:()=>({}),
+    getDoc:async()=>({exists:()=>true,data:()=>({bookData:clone(current)})}),
+    runTransaction:async (_db, fn) => {
+      for (let attempt=0; attempt<5; attempt++) {
+        let revision, staged;
+        await fn({get:async()=>{
+          revision=version;
+          const snapshot=clone(current);
+          if (++initialReads <= 2) { if (initialReads === 2) release(); await barrier; }
+          return {exists:()=>true,data:()=>({bookData:snapshot})};
+        }, set:(_ref,value)=>{ staged=value.bookData; }});
+        if (revision !== version) continue;
+        current=clone(staged); version++; return;
+      }
+      throw Error('transaction retries exhausted');
+    }
+  };
+  for (const client of [a,b]) { client.context.fakeServices=services; client.run('getFirebaseServices=async()=>fakeServices'); }
+  await Promise.all([a.run('pushFirebaseSync()'), b.run('syncNow()')]);
+  assert.deepEqual(current.data.records[day].map(r=>r.id).sort(), ['cloud','phone-a','phone-b']);
+  assert.ok(version >= 2);
+});
 test('widget migration preserves profile fields, timestamps, and deliberately empty meals', () => {
   const fixture = book(); fixture.profile.breed = 'Golden retriever'; fixture.profile.notes = 'Keep';
   fixture.foodTimes = { morning: '', updatedAt: stamp }; fixture.foodSettings.amounts = { morning: '', evening: '' };
@@ -144,6 +197,16 @@ test('widget migration preserves profile fields, timestamps, and deliberately em
   assert.equal(result.profile.updatedAt, stamp);
   assert.equal(result.foodTimes.updatedAt, stamp);
   assert.equal(result.foodSettings.amounts.morning, '');
+});
+test('main app migration keeps a puppy named Mochi and deliberately empty feeding times', () => {
+  const fixture = book();
+  fixture.profile.name = 'Mochi'; fixture.profile.birthday = '2025-02-01';
+  fixture.foodTimes = {morning:'', afternoon:'', evening:'', updatedAt:stamp};
+  const result = app('app.js', fixture).state();
+  assert.equal(result.profile.name, 'Mochi');
+  assert.equal(result.profile.birthday, '2025-02-01');
+  assert.equal(result.foodTimes.morning, '');
+  assert.equal(result.foodTimes.evening, '');
 });
 test('retiring GPS removes only location settings, preserving records and running walks', () => {
   const fixture = book([record('walk-history')]);
@@ -195,6 +258,148 @@ test('PWA does not overwrite profile inputs while merging', () => {
 test('verification rejects an incomplete record even when its ID still exists', () => {
   const expected = book([{ ...record('a'), amount: '35g' }]);
   assert.throws(() => core.assertRecordsPresent(expected, book([record('a')])));
+});
+
+test('verification checks record dates, timer identity, profile, bookmarks and snack settings', () => {
+  const expected = book([record('a')]);
+  expected.activeSessions.walk = {id:'walk-a', start:stamp, updatedAt:stamp};
+  expected.bookmarks[day] = {bookmarked:true, note:'Vet visit', updatedAt:stamp};
+  expected.foodSettings = {snacks:['Treat'], snackAmounts:{Treat:'5g'}, snacksUpdatedAt:stamp, updatedAt:stamp};
+  for (const mutate of [
+    b => { b.records['2026-09-10'] = b.records[day]; delete b.records[day]; },
+    b => { b.activeSessions.walk.id = 'walk-b'; },
+    b => { b.profile.name = 'Wrong puppy'; },
+    b => { b.bookmarks[day].note = ''; },
+    b => { b.foodSettings.snackAmounts.Treat = '1g'; },
+  ]) {
+    const remote = clone(expected); mutate(remote);
+    assert.throws(() => core.assertRecordsPresent(expected, remote));
+  }
+  const newer = clone(expected);
+  newer.profile = {name:'Newer',updatedAt:'2026-09-09T11:00:00Z'};
+  newer.bookmarks[day] = {bookmarked:false,note:'',updatedAt:'2026-09-09T11:00:00Z'};
+  newer.stoppedSessionIds.push('walk-a'); delete newer.activeSessions.walk;
+  assert.doesNotThrow(() => core.assertRecordsPresent(expected, newer));
+  assert.throws(() => core.remoteData({records:{[day]:[[]]}}));
+});
+
+for (const file of ['app.js', 'quick-widget.js']) {
+  test(`${file}: first sync preserves recently edited local settings and deletions`, async () => {
+    const fixture = book([record('local')]);
+    fixture.sync.lastSync = '';
+    fixture.profile = {name:'Locally edited',updatedAt:'2026-09-09T12:00:00Z'};
+    fixture.deletedRecordIds = ['removed'];
+    const remote = book([record('removed'), record('remote')]);
+    const client = app(file, fixture);
+    const cloud = server(client, remote);
+    await client.run(file === 'app.js' ? 'pushFirebaseSync()' : 'syncNow()');
+    assert.equal(client.state().profile.name, 'Locally edited');
+    assert.ok(cloud.data().deletedRecordIds.includes('removed'));
+    assert.deepEqual(cloud.data().records[day].map(r=>r.id).sort(), ['local','remote']);
+  });
+}
+
+test('quick widget refuses to replace or sync an unreadable local book', async () => {
+  const storage = new Map([['puppy-record-book-state', '{broken']]);
+  const client = app('quick-widget.js', undefined, storage);
+  assert.equal(client.run('localStateUnreadable'), true);
+  assert.equal(client.run('persist()'), false);
+  await client.run('syncNow()');
+  assert.equal(storage.get('puppy-record-book-state'), '{broken');
+  assert.match(client.run('elements.statusText.textContent'), /not been overwritten/);
+});
+
+test('main app refuses to overwrite an unreadable save from another window', () => {
+  const client = app('app.js', book([record('local')]));
+  client.storage.set('puppy-record-book-state', '{broken');
+  assert.equal(client.run('persist()'), false);
+  assert.equal(client.storage.get('puppy-record-book-state'), '{broken');
+  assert.equal(client.state().records[day][0].id, 'local');
+});
+
+test('recovered records survive old cloud deletions without reviving obsolete timers', () => {
+  const fixture = book([record('kept')]); fixture.deletedRecordIds = ['removed'];
+  const client = app('app.js', fixture);
+  const backup = book([record('removed'), record('kept')]);
+  backup.activeSessions.sleep = {id:'old-timer', type:'sleep', start:stamp, updatedAt:stamp};
+  backup.deletedRecordIds = ['kept'];
+  client.context.backupFixture = {state:backup,savedAt:stamp};
+  client.run('recoverLocalBackup(backupFixture)');
+  const restored = client.state();
+  assert.equal(restored.records[day].length, 2);
+  assert.equal(restored.records[day].filter(r=>r.id === 'kept').length, 1);
+  const recovered = restored.records[day].find(r=>r.id !== 'kept');
+  assert.ok(recovered.id !== 'removed');
+  assert.deepEqual(restored.activeSessions, {});
+  assert.ok(restored.deletedRecordIds.includes('removed'));
+  assert.ok(!restored.deletedRecordIds.includes('kept'));
+  const cloud = book([record('removed')]); cloud.deletedRecordIds = ['removed'];
+  assert.ok(core.mergeBook(restored, cloud).records[day].some(r => r.id === recovered.id));
+});
+
+test('book backup keeps records, settings and bookmarks without exporting sync credentials or photos', () => {
+  const fixture = book([record('saved')]);
+  fixture.bookmarks[day] = {bookmarked:true,note:'Important',updatedAt:stamp};
+  fixture.photos = [{src:'private photo'}]; fixture._pendingSync = 'pending';
+  const client = app('app.js', fixture);
+  const backup = JSON.parse(client.run('JSON.stringify(makeBookBackup())'));
+  assert.equal(backup.format, 'puppy-record-book-backup');
+  assert.equal(backup.state.records[day][0].id, 'saved');
+  assert.equal(backup.state.bookmarks[day].note, 'Important');
+  assert.equal(backup.state.sync.code, '');
+  assert.equal(backup.state.sync.firebaseConfig, '');
+  assert.equal(backup.state._pendingSync, undefined);
+  assert.deepEqual(backup.state.photos, []);
+});
+
+test('book backup file merges missing records and keeps this device credentials', async () => {
+  const source = app('app.js',book([record('backup-record')]));
+  const json = source.run('JSON.stringify(makeBookBackup())');
+  const target = app('app.js',book([record('existing-record')]));
+  const credentials = clone(target.state().sync);
+  target.context.backupFile = {text:async()=>json};
+  await target.run('importBookBackup({target:{files:[backupFile]}})');
+  assert.equal(target.state().records[day].length, 2);
+  assert.equal(target.state().sync.code, credentials.code);
+  assert.equal(target.state().sync.firebaseConfig, credentials.firebaseConfig);
+  assert.ok(target.state()._pendingSync);
+});
+
+test('invalid backup files are rejected without changing local records', async () => {
+  const target = app('app.js',book([record('existing')]));
+  const before = target.state();
+  target.context.badFile = {text:async()=>JSON.stringify({format:'wrong',state:{records:{}}})};
+  await target.run('importBookBackup({target:{files:[badFile]}})');
+  assert.deepEqual(target.state(),before);
+});
+
+test('quick widget does not claim sync success if the local confirmation could not be saved', async () => {
+  const client = app('quick-widget.js', book([record('local')]));
+  client.run('setSyncPending(true); persist()');
+  server(client);
+  const original = client.context.localStorage.setItem;
+  client.context.localStorage.setItem = (key, value) => {
+    if (key === 'puppy-record-book-state') throw Error('Storage full');
+    original(key, value);
+  };
+  await client.run('syncNow()');
+  assert.equal(client.run('syncPending'), true);
+  assert.ok(client.state()._pendingSync);
+  assert.match(client.run('elements.statusText.textContent'), /local save failed/i);
+});
+
+test('main app does not report sync success when local storage fails', async () => {
+  const client = app('app.js', book([record('local')]));
+  client.run('persist(); state._pendingSync="pending"; persist({skipAutoSync:true})');
+  server(client);
+  const original = client.context.localStorage.setItem;
+  client.context.localStorage.setItem = (key, value) => {
+    if (key === 'puppy-record-book-state') throw Error('Storage full');
+    original(key, value);
+  };
+  assert.equal(await client.run('pushFirebaseSync()'), false);
+  assert.ok(client.state()._pendingSync);
+  assert.match(client.run('elements.homeSyncStatus.textContent'), /local save failed/i);
 });
 
 const mixedFood = () => ({ id: 'meal', type: 'food', foodKind: 'food', time: '10:00', amount: '100g',

@@ -1223,7 +1223,8 @@ input[readonly] { background-color: var(--cream); }
   font-weight: 900;
 }
 
-#importDataInput {
+#importDataInput,
+#importBookBackupInput {
   position: absolute;
   inline-size: 1px;
   block-size: 1px;

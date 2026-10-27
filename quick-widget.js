@@ -27,6 +27,7 @@ const serializeFirebase = PuppySync.serialQueue();
 let pushPromise = null;
 let pullPromise = null;
 let feedingPlanVisible = localStorage.getItem(feedingPlanVisibilityKey) !== "0";
+let localStateUnreadable = false;
 const state = loadState();
 syncPending ||= Boolean(state._pendingSync);
 let lastPersistedStateJson = JSON.stringify(state);
@@ -53,6 +54,11 @@ function init() {
   updateWidgetTitle();
   elements.syncCode.value = state.sync?.code || "";
   elements.firebaseConfig.value = state.sync?.firebaseConfig || "";
+  if (localStateUnreadable) {
+    document.querySelectorAll("button, input, textarea, select").forEach(control => { control.disabled = true; });
+    setStatus("Local data could not be read. It has not been overwritten. Keep it intact and seek help recovering a backup before logging or syncing.");
+    return;
+  }
   document.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => handleQuickAction(button.dataset.action));
   });
@@ -351,6 +357,7 @@ async function syncNow() {
 }
 
 async function syncNowExclusive() {
+  if (localStateUnreadable) return;
   if (syncInProgress) {
     return;
   }
@@ -362,14 +369,18 @@ async function syncNowExclusive() {
   syncInProgress = true;
   const syncingToken = state._pendingSync;
   const localSnapshot = PuppySync.clone(state);
+  const target = { code: state.sync.code, firebaseConfig: state.sync.firebaseConfig };
+  const checkTarget = () => PuppySync.guardTarget(state.sync, target);
   try {
     if (navigator.onLine === false) throw new Error("Offline. Will retry when online");
     setStatus("Syncing...");
     const services = await getFirebaseServices(settings);
-    const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    checkTarget();
+    const ref = services.doc(services.db, "puppy_books", target.code);
     let writtenPayload;
     await services.runTransaction(services.db, async (transaction) => {
       const snapshot = await transaction.get(ref);
+      checkTarget();
       const merged = snapshot.exists()
         ? PuppySync.mergeBook(localSnapshot, migrateState(PuppySync.remoteData(snapshot.data().bookData)), !localSnapshot.sync.lastSync)
         : localSnapshot;
@@ -377,6 +388,7 @@ async function syncNowExclusive() {
       transaction.set(ref, { bookData: writtenPayload, updatedAt: new Date().toISOString() });
     });
     const confirmed = await services.getDoc(ref);
+    checkTarget();
     if (!confirmed.exists()) throw new Error("Firebase did not confirm the puppy book");
     PuppySync.assertRecordsPresent(writtenPayload, confirmed.data().bookData);
     mergeRemote(writtenPayload);
@@ -387,10 +399,16 @@ async function syncNowExclusive() {
     syncPending = !fullySynced;
     localStorage.setItem(pendingSyncKey, syncPending ? "1" : "0");
     syncRetryDelay = 5000;
-    persist();
+    if (!persist()) {
+      state._pendingSync = syncingToken || createId();
+      syncPending = true;
+      try { localStorage.setItem(pendingSyncKey, "1"); } catch {}
+      retrySyncSoon();
+      return;
+    }
     updateWidgetTitle();
     render();
-    setStatus(fullySynced ? `Synced ${state.sync.lastSync}` : "New changes saved locally; finishing sync...");
+    setStatus(fullySynced ? [`Synced ${state.sync.lastSync}`, PuppySync.capacityWarning(writtenPayload)].filter(Boolean).join(" ") : "New changes saved locally; finishing sync...");
     if (!fullySynced) pushSoon();
   } catch (error) {
     syncPending = true;
@@ -408,6 +426,7 @@ async function pullQuietly() {
 }
 
 async function pullQuietlyExclusive() {
+  if (localStateUnreadable) return;
   if (pullInProgress || syncInProgress) {
     return;
   }
@@ -417,8 +436,11 @@ async function pullQuietlyExclusive() {
   }
   pullInProgress = true;
   try {
+    const target = { code: state.sync.code, firebaseConfig: state.sync.firebaseConfig };
     const services = await getFirebaseServices(settings);
-    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", state.sync.code));
+    PuppySync.guardTarget(state.sync, target);
+    const snapshot = await services.getDoc(services.doc(services.db, "puppy_books", target.code));
+    PuppySync.guardTarget(state.sync, target);
     if (snapshot.exists()) {
       mergeRemote(snapshot.data().bookData);
       state.sync.lastSync = new Date().toLocaleString();
@@ -581,8 +603,12 @@ function parseFirebaseConfig(value) {
 
 function loadState() {
   try {
-    return migrateState(JSON.parse(localStorage.getItem(storageKey) || "{}"));
+    const value = JSON.parse(localStorage.getItem(storageKey) || "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid local state");
+    if (value.records !== undefined) PuppySync.remoteData(value);
+    return migrateState(value);
   } catch {
+    localStateUnreadable = true;
     return migrateState({});
   }
 }
@@ -657,6 +683,10 @@ function normalizeSnackAmounts(value, snacks) {
 }
 
 function persist() {
+  if (localStateUnreadable) {
+    setStatus("Local data could not be read. It has not been overwritten; keep it intact and seek recovery help.");
+    return false;
+  }
   try {
     const stored = localStorage.getItem(storageKey);
     if (stored && stored !== lastPersistedStateJson) {

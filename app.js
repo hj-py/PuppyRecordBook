@@ -113,6 +113,7 @@ let lastResumeSyncAt = 0;
 let appWasHidden = document.hidden;
 let importInProgress = false;
 let persistOptions = {};
+let localSaveError = "";
 let selectedStatusYear = today.getFullYear();
 let activeCalendarType = "walk";
 let calendarEditingRecordId = null;
@@ -297,6 +298,8 @@ const elements = {
   firebaseConfig: document.querySelector("#firebaseConfig"),
   exportExcelButton: document.querySelector("#exportExcelButton"),
   importDataInput: document.querySelector("#importDataInput"),
+  exportBookBackupButton: document.querySelector("#exportBookBackupButton"),
+  importBookBackupInput: document.querySelector("#importBookBackupInput"),
   recoverBackupButton: document.querySelector("#recoverBackupButton"),
   backupRecoveryList: document.querySelector("#backupRecoveryList"),
   syncStatus: document.querySelector("#syncStatus"),
@@ -580,6 +583,8 @@ function bindEvents() {
   elements.pullFirebaseButton.addEventListener("click", pullFirebaseSync);
   elements.exportExcelButton.addEventListener("click", exportExcelData);
   elements.importDataInput.addEventListener("change", importData);
+  elements.exportBookBackupButton.addEventListener("click", exportBookBackup);
+  elements.importBookBackupInput.addEventListener("change", importBookBackup);
   elements.recoverBackupButton.addEventListener("click", recoverLatestLocalBackup);
 
   [elements.syncCode, elements.firebaseConfig].forEach((input) => {
@@ -3583,29 +3588,35 @@ function recoverLocalBackup(backup) {
   if (!backup?.state) {
     renderSyncStatus("No local recovery backup found on this device.");
     showToast("No local recovery backup found on this device.", 6000);
-    return;
+    return false;
   }
+
+  if (!window.confirm("Merge this backup's records, bookmarks and settings? Missing records get new IDs so old deletions cannot remove them again; duplicates may appear. Running timers, sync credentials and the photo stay as they are on this device.")) return false;
 
   createLocalBackup("before recovery restore");
   const localPhotos = state.photos;
   const localSync = state.sync;
   const backupState = migrateState(backup.state);
-  const backupRecordIds = new Set(
-    Object.values(backupState.records || {})
+  const localRecordIds = new Set(
+    Object.values(state.records || {})
       .flat()
       .map((record) => record.id)
       .filter(Boolean)
   );
+  backupState.records = Object.fromEntries(Object.entries(backupState.records || {}).map(([date, records]) => [date,
+    records.map(record => localRecordIds.has(record.id) ? record : { ...record, id: createId(), updatedAt: new Date().toISOString() })
+  ]));
   const local = makeJsonSafe(state);
-  local.deletedRecordIds = (local.deletedRecordIds || []).filter((id) => !backupRecordIds.has(id));
-  backupState.deletedRecordIds = (backupState.deletedRecordIds || []).filter((id) => !backupRecordIds.has(id));
+  backupState.deletedRecordIds = [];
+  backupState.stoppedSessionIds = [];
+  backupState.activeSessions = {};
   const merged = mergeStates(local, backupState);
   Object.keys(state).forEach((key) => delete state[key]);
   Object.assign(state, merged);
   state.photos = localPhotos;
   state.sync = localSync;
   syncProfileWeightFromRecords();
-  persist();
+  if (!persist()) return false;
   refreshCurrentView();
   renderReminderSections();
   const recordCount = countBackupRecords(backup);
@@ -3613,6 +3624,46 @@ function recoverLocalBackup(backup) {
   elements.backupRecoveryList.hidden = true;
   renderSyncStatus(`Recovered local backup from ${new Date(backup.savedAt).toLocaleString()}: ${recordCount} records, ${todayCount} today.`);
   showToast(`Recovered backup: ${recordCount} records, ${todayCount} today.`, 9000);
+  return true;
+}
+
+function makeBookBackup() {
+  const copy = makeJsonSafe(state);
+  delete copy._pendingSync;
+  copy.sync = { code: "", firebaseConfig: "", lastSync: "" };
+  copy.photos = [];
+  return { format: "puppy-record-book-backup", version: 1, savedAt: new Date().toISOString(), state: copy };
+}
+
+function exportBookBackup() {
+  const blob = new Blob([JSON.stringify(makeBookBackup())], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `puppy-book-backup-${toKey(new Date())}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(link.href);
+  renderSyncStatus("Book backup exported. Keep this private file somewhere safe.");
+}
+
+async function importBookBackup(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  importInProgress = true;
+  try {
+    const backup = JSON.parse(await file.text());
+    if (backup?.format !== "puppy-record-book-backup" || backup.version !== 1) throw new Error("This is not a compatible puppy book backup.");
+    PuppySync.remoteData(backup.state);
+    if (recoverLocalBackup(backup)) renderSyncStatus("Backup merged. Check for duplicates and wait for Firebase confirmation.");
+  } catch (error) {
+    renderSyncStatus(`Backup restore failed: ${error.message || "invalid file"}`);
+    showToast("Backup restore failed. Check your local records and keep the backup file.", 9000);
+  } finally {
+    importInProgress = false;
+    elements.importBookBackupInput.value = "";
+    scheduleAutoFirebaseSync();
+  }
 }
 
 function applySyncedPayload(payload, options = {}) {
@@ -3883,8 +3934,8 @@ function isDuplicateImportedRecord(date, record) {
 }
 
 function renderSyncStatus(message) {
-  elements.syncStatus.textContent = message;
-  elements.homeSyncStatus.textContent = message;
+  elements.syncStatus.textContent = localSaveError || message;
+  elements.homeSyncStatus.textContent = localSaveError || message;
 }
 
 function showToast(message, duration = 3200) {
@@ -3909,15 +3960,18 @@ async function pushFirebaseSyncExclusive() {
 
   const syncingRevision = localChangeRevision;
   const syncingToken = state._pendingSync;
+  const target = { code: state.sync.code, firebaseConfig: state.sync.firebaseConfig };
+  const checkTarget = () => PuppySync.guardTarget(state.sync, target);
   renderSyncStatus("Pushing to Firebase...");
   try {
     const services = await getFirebaseServices(settings);
-    const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    await writeMergedFirebasePayload(services, ref);
+    checkTarget();
+    const ref = services.doc(services.db, "puppy_books", target.code);
+    const writtenPayload = await writeMergedFirebasePayload(services, ref, checkTarget);
     state.sync.lastSync = new Date().toLocaleString();
-    persist({ skipAutoSync: true });
+    if (!persist({ skipAutoSync: true })) { markFirebasePushPending(); return false; }
     const fullySynced = finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
-    renderSyncStatus(fullySynced ? `Confirmed by Firebase at ${state.sync.lastSync}.` : "New changes saved on this device. Finishing sync...");
+    renderSyncStatus(fullySynced ? [`Confirmed by Firebase at ${state.sync.lastSync}.`, PuppySync.capacityWarning(writtenPayload)].filter(Boolean).join(" ") : "New changes saved on this device. Finishing sync...");
     return true;
   } catch (error) {
     queueFirebaseRetry(`Firebase push failed: ${getFirebaseErrorMessage(error)}`);
@@ -3938,6 +3992,8 @@ async function pullFirebaseSyncExclusive({ confirmPending = true } = {}) {
   const pendingLocalPush = hasPendingFirebasePush();
   const syncingRevision = localChangeRevision;
   const syncingToken = state._pendingSync;
+  const target = { code: state.sync.code, firebaseConfig: state.sync.firebaseConfig };
+  const checkTarget = () => PuppySync.guardTarget(state.sync, target);
   if (pendingLocalPush && confirmPending) {
     const shouldMerge = window.confirm(
       "This device has local changes that failed to push. Pulling now will compare this device with Firebase, keep local-only records, keep Firebase-only records, and write the merged puppy book back to Firebase. Continue?"
@@ -3951,12 +4007,14 @@ async function pullFirebaseSyncExclusive({ confirmPending = true } = {}) {
   renderSyncStatus(pendingLocalPush ? "Merging this device with Firebase..." : "Pulling and comparing Firebase...");
   try {
     const services = await getFirebaseServices(settings);
-    const ref = services.doc(services.db, "puppy_books", state.sync.code);
+    checkTarget();
+    const ref = services.doc(services.db, "puppy_books", target.code);
     const firstPull = !state.sync.lastSync;
     const mergeOptions = {
       preferRemoteDefaults: firstPull,
       firstPull,
       preserveRemoteRecords: firstPull,
+      checkTarget,
     };
     const result = pendingLocalPush
       ? await mergeFirebasePull(services, ref, mergeOptions)
@@ -3966,7 +4024,7 @@ async function pullFirebaseSyncExclusive({ confirmPending = true } = {}) {
       return false;
     }
     state.sync.lastSync = new Date().toLocaleString();
-    persist({ skipAutoSync: true });
+    if (!persist({ skipAutoSync: true })) { markFirebasePushPending(); return false; }
     if (result.wrote) {
       finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
     } else if (result.needsPush || localChangeRevision > syncingRevision) {
@@ -3975,11 +4033,12 @@ async function pullFirebaseSyncExclusive({ confirmPending = true } = {}) {
     } else {
       clearFirebaseRetry();
     }
-    renderSyncStatus(
+    renderSyncStatus([
       firstPull
         ? "First Firebase pull complete. Profile and default settings came from Firebase; starter sample records were removed."
-        : `Refresh complete. Kept ${result.summary.localOnly} local-only records and added ${result.summary.remoteOnly} Firebase-only records.`
-    );
+        : `Refresh complete. Kept ${result.summary.localOnly} local-only records and added ${result.summary.remoteOnly} Firebase-only records.`,
+      PuppySync.capacityWarning(result.payload),
+    ].filter(Boolean).join(" "));
     return true;
   } catch (error) {
     const message = `Firebase pull failed: ${getFirebaseErrorMessage(error)}`;
@@ -4031,14 +4090,17 @@ async function autoFirebaseSyncExclusive() {
     if (!settings) {
       return;
     }
+    const target = { code: state.sync.code, firebaseConfig: state.sync.firebaseConfig };
+    const checkTarget = () => PuppySync.guardTarget(state.sync, target);
     const services = await getFirebaseServices(settings);
-    const ref = services.doc(services.db, "puppy_books", state.sync.code);
-    await writeMergedFirebasePayload(services, ref);
+    checkTarget();
+    const ref = services.doc(services.db, "puppy_books", target.code);
+    const writtenPayload = await writeMergedFirebasePayload(services, ref, checkTarget);
     state.sync.lastSync = new Date().toLocaleString();
-    persist({ skipAutoSync: true });
+    if (!persist({ skipAutoSync: true })) { markFirebasePushPending(); return; }
     syncSucceeded = true;
     const fullySynced = finishSuccessfulFirebaseOperation(syncingRevision, syncingToken);
-    renderSyncStatus(fullySynced ? `Confirmed by Firebase at ${state.sync.lastSync}.` : "New changes saved on this device. Finishing sync...");
+    renderSyncStatus(fullySynced ? [`Confirmed by Firebase at ${state.sync.lastSync}.`, PuppySync.capacityWarning(writtenPayload)].filter(Boolean).join(" ") : "New changes saved on this device. Finishing sync...");
     if (fullySynced) showToast("Saved and confirmed by Firebase.", 1800);
   } catch (error) {
     queueFirebaseRetry(`Auto-sync failed: ${getFirebaseErrorMessage(error)}`);
@@ -4119,12 +4181,13 @@ function finishSuccessfulFirebaseOperation(syncingRevision, syncingToken) {
   return false;
 }
 
-async function writeMergedFirebasePayload(services, ref) {
+async function writeMergedFirebasePayload(services, ref, checkTarget = () => {}) {
   if (navigator.onLine === false) throw new Error("Offline. Saved changes will retry when the app is online");
   const localSnapshot = state.sync.lastSync ? makeJsonSafe(state) : removeStarterSampleRecords(makeJsonSafe(state));
   let writtenPayload = null;
   await services.runTransaction(services.db, async (transaction) => {
     const snapshot = await transaction.get(ref);
+    checkTarget();
     let mergedState = makeJsonSafe(localSnapshot);
     if (snapshot.exists()) {
       const rawRemote = PuppySync.remoteData(snapshot.data().bookData);
@@ -4141,6 +4204,7 @@ async function writeMergedFirebasePayload(services, ref) {
     throw new Error("Firebase transaction did not prepare data");
   }
   await verifyFirebaseWrite(services, ref, writtenPayload);
+  checkTarget();
   mergeSyncedPayload(writtenPayload, { firstPull: !localSnapshot.sync.lastSync, preferRemoteDefaults: !localSnapshot.sync.lastSync, baseline: localSnapshot });
   return writtenPayload;
 }
@@ -4153,6 +4217,7 @@ async function mergeFirebasePull(services, ref, options = {}) {
   let summary = { localOnly: 0, remoteOnly: 0 };
   await services.runTransaction(services.db, async (transaction) => {
     const snapshot = await transaction.get(ref);
+    options.checkTarget?.();
     if (!snapshot.exists()) {
       return;
     }
@@ -4175,6 +4240,7 @@ async function mergeFirebasePull(services, ref, options = {}) {
     throw new Error("Firebase merge did not prepare data");
   }
   await verifyFirebaseWrite(services, ref, writtenPayload);
+  options.checkTarget?.();
   mergeSyncedPayload(writtenPayload, { ...options, baseline: localSnapshot });
   return { found: true, payload: writtenPayload, summary, wrote: true, needsPush: false };
 }
@@ -4182,6 +4248,7 @@ async function mergeFirebasePull(services, ref, options = {}) {
 async function readFirebasePull(services, ref, options = {}) {
   const baseline = makeJsonSafe(state);
   const snapshot = await services.getDoc(ref);
+  options.checkTarget?.();
   if (!snapshot.exists()) {
     return { found: false, payload: null, summary: { localOnly: 0, remoteOnly: 0 }, wrote: false, needsPush: false };
   }
@@ -4403,13 +4470,13 @@ function mergeStates(local, remote, options = {}) {
   const preferRemoteDefaults = Boolean(options.preferRemoteDefaults);
   const remoteHasSection = (sectionName) => Object.prototype.hasOwnProperty.call(options.rawRemote || {}, sectionName);
   const mayUseRemoteDefault = sectionName => preferRemoteDefaults && remoteHasSection(sectionName) &&
+    (!(Date.parse(local[sectionName]?.updatedAt || "") || 0) ||
+      (Date.parse(remote[sectionName]?.updatedAt || "") || 0) > (Date.parse(local[sectionName]?.updatedAt || "") || 0)) &&
     (!options.baseline || stableJson(local[sectionName]) === stableJson(options.baseline[sectionName]));
   const chooseDefaultSection = (sectionName, localSection, remoteSection) =>
     mayUseRemoteDefault(sectionName) ? chooseRemoteSection(localSection, remoteSection) : chooseLatestSection(localSection, remoteSection);
   const merged = migrateState({ ...remote, ...local, photos: local.photos });
-  const deletedRecordIds = options.preserveRemoteRecords
-    ? Array.from(new Set(remote.deletedRecordIds || []))
-    : Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
+  const deletedRecordIds = Array.from(new Set([...(remote.deletedRecordIds || []), ...(local.deletedRecordIds || [])]));
   const stoppedSessionIds = Array.from(new Set([...(remote.stoppedSessionIds || []), ...(local.stoppedSessionIds || [])]));
   merged.owner = chooseDefaultSection("owner", local.owner, remote.owner);
   merged.profile = chooseDefaultSection("profile", local.profile, remote.profile);
@@ -4419,7 +4486,7 @@ function mergeStates(local, remote, options = {}) {
   merged.foodSettings = chooseDefaultSection("foodSettings", local.foodSettings, remote.foodSettings);
   const localSnackTime = Date.parse(local.foodSettings?.snacksUpdatedAt || "") || 0;
   const remoteSnackTime = Date.parse(remote.foodSettings?.snacksUpdatedAt || "") || 0;
-  const snackSource = mayUseRemoteDefault("foodSettings") || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
+  const snackSource = (preferRemoteDefaults && remoteHasSection("foodSettings") && !localSnackTime) || remoteSnackTime > localSnackTime ? remote.foodSettings : local.foodSettings;
   merged.foodSettings.snacks = normalizeSnackList(snackSource?.snacks || []);
   merged.foodSettings.snackAmounts = normalizeSnackAmounts(snackSource?.snackAmounts, merged.foodSettings.snacks);
   merged.foodSettings.snacksUpdatedAt = snackSource?.snacksUpdatedAt || "";
@@ -5159,8 +5226,8 @@ function migrateState(value) {
   const profile = value.profile || {};
   const ageMonths = Number(profile.ageMonths) || 4;
   const legacyWeight = Number(profile.weightKg || profile.expectedAdultWeightKg) || 12;
-  const migratedName = !profile.name || profile.name === "Mochi" ? "Leo" : profile.name;
-  const migratedBirthday = !profile.birthday || profile.name === "Mochi" ? "2026-03-14" : profile.birthday;
+  const migratedName = profile.name || "Leo";
+  const migratedBirthday = profile.birthday || "2026-03-14";
   const photos = Array.isArray(value.photos)
     ? value.photos.map((photo) => {
         if (typeof photo === "string") {
@@ -5206,9 +5273,9 @@ function migrateState(value) {
       updatedAt: value.schoolSchedule?.updatedAt || "",
     },
     foodTimes: {
-      morning: value.foodTimes?.morning || "07:30",
+      morning: value.foodTimes?.morning ?? "07:30",
       afternoon: value.foodTimes?.afternoon || "",
-      evening: value.foodTimes?.evening || "18:30",
+      evening: value.foodTimes?.evening ?? "18:30",
       updatedAt: value.foodTimes?.updatedAt || "",
     },
     foodSettings: {
@@ -5272,11 +5339,17 @@ function persist(options = {}) {
   try {
     const stored = localStorage.getItem(storageKey);
     if (stored && stored !== lastPersistedStateJson) {
-      const incoming = migrateState(JSON.parse(stored));
+      const parsed = JSON.parse(stored);
+      PuppySync.remoteData(parsed);
+      const incoming = migrateState(parsed);
       Object.assign(state, mergeStates(state, incoming));
     }
   } catch {
-    // Never replace the in-memory book when an older local save is unreadable.
+    localSaveError = "Local storage could not be read. Nothing was overwritten; export your records and recover a backup.";
+    renderSyncStatus("Local storage could not be read. Nothing was overwritten; export your records and recover a backup.");
+    showToast("Local storage could not be read. Nothing was overwritten; export your records first.", 12000);
+    persistOptions = {};
+    return false;
   }
   if (!options.skipAutoSync && JSON.stringify(state) !== lastPersistedStateJson) {
     state._pendingSync = createId();
@@ -5305,9 +5378,11 @@ function persist(options = {}) {
     }
   }
   if (!saved) {
+    localSaveError = "Local save failed. Do not close the app; export your records and free device storage.";
     renderSyncStatus("Local save failed. Do not close the app; export your records and free device storage.");
     showToast("Local save failed. Do not close the app; export your records first.", 12000);
   } else {
+    localSaveError = "";
     lastPersistedStateJson = serializedState;
     if (!options.skipAutoSync) {
       localChangeRevision += 1;
